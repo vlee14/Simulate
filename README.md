@@ -61,6 +61,24 @@ On Windows, you can also double-click [`serve.bat`](serve.bat).
 - `npm run preview`: Previews the production build locally.
 - `npm run typecheck`: Runs TypeScript compiler (`tsc --noEmit`) to validate type safety.
 
+### GitHub Pages
+
+Pushing to `main` runs [`.github/workflows/pages.yml`](.github/workflows/pages.yml), which builds `dist/` and publishes it with GitHub Actions.
+
+After the repository is on GitHub, enable it once:
+
+1. Open **Settings → Pages**.
+2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+
+A project site is served at `https://<user>.github.io/<repository>/`. The workflow sets Vite's `base` to `/<repository>/` so scripts and styles load from that path. A repository named `<user>.github.io` is served from the domain root instead.
+
+To preview that subpath locally, build with the repository name and open the printed URL:
+
+```bash
+PAGES_BASE=/Simulate/ npm run build
+npm run preview
+```
+
 ---
 
 ## System Architecture
