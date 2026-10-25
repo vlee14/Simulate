@@ -4,6 +4,7 @@ import { flowApi, setFlowApi } from '../sim/flow';
 import { useStore } from '../store';
 import { Dock } from './Dock';
 import { nodeTypes } from './nodes';
+import { edgeTypes } from './wire';
 
 export const Canvas: React.FC = () => {
   const elements = useStore((state) => state.elements);
@@ -49,6 +50,7 @@ export const Canvas: React.FC = () => {
       <ReactFlow
         elements={elements}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onLoad={(instance) => {
           setFlowApi(instance);
           setReady(true);

@@ -3,6 +3,7 @@ import { libraryGroups } from '../engine/blocks';
 import { useStore } from '../store';
 import { CATEGORY_COLOR } from '../ui';
 import { flowApi } from '../sim/flow';
+import { ShapeMark } from './shapes';
 
 export const Library: React.FC = () => {
   const addBlock = useStore((state) => state.addBlock);
@@ -58,7 +59,7 @@ export const Library: React.FC = () => {
                 }}
                 onClick={() => place(block.type)}
               >
-                <i style={{ background: CATEGORY_COLOR[block.category] }} />
+                <ShapeMark type={block.type} color={CATEGORY_COLOR[block.category] ?? '#8b97a8'} />
                 <span>
                   <strong>{block.name}</strong>
                   <em>{block.description}</em>

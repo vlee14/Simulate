@@ -15,7 +15,7 @@ export function isEdge(element: Node | Edge): element is Edge {
 }
 
 export const edgeDefaults = {
-  type: 'smoothstep' as const,
+  type: 'wire' as const,
   arrowHeadType: ArrowHeadType.ArrowClosed,
   style: { stroke: '#8b97a8', strokeWidth: 1.6 },
 };

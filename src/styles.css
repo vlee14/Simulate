@@ -266,7 +266,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-color: transparent;
 }
 .lib-item:hover { background: #232a36; }
-.lib-item i { width: 3px; border-radius: 2px; align-self: stretch; }
+.lib-mark { width: 26px; height: 18px; flex: none; display: block; }
 .lib-item strong { display: block; font-weight: 600; }
 .lib-item em {
   display: block;
@@ -278,6 +278,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .canvas-wrap { flex: 1; min-width: 0; position: relative; background: var(--bg); }
 .canvas-wrap .react-flow { background: var(--bg); }
+.canvas-wrap:has(.dock.open) .react-flow { height: calc(100% - 214px); }
 .react-flow__node { background: transparent !important; border: none !important; padding: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
 .react-flow__attribution { background: transparent !important; }
 .react-flow__controls { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: none; }
@@ -294,29 +295,110 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .react-flow__edge.selected .react-flow__edge-path, .react-flow__edge:focus .react-flow__edge-path { stroke: var(--accent); }
 
-.block, .instrument, .plant, .note {
+.instrument, .plant, .note {
   position: relative;
   background: #171c24;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border: 1.5px solid #d5deea;
+  border-radius: 2px;
   color: var(--text);
 }
-.block { min-width: 128px; padding: 8px 16px 8px 18px; border-top: 3px solid var(--accent); }
-.block.is-selected, .instrument.is-selected, .plant.is-selected, .note.is-selected { border-color: var(--accent); }
-.block.is-bad, .plant.is-bad { border-color: var(--danger); }
+.instrument.is-selected, .plant.is-selected, .note.is-selected { border-color: var(--accent); }
+.plant.is-bad { border-color: var(--danger); }
 .block-kicker { color: var(--faint); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
-.block-title { font-weight: 650; margin-top: 2px; }
-.block-value {
-  margin-top: 4px;
-  font-family: "Cascadia Mono", Consolas, monospace;
-  color: var(--accent);
-  font-size: 12px;
+
+.sl { position: relative; color: var(--text); user-select: none; }
+.sl-body { position: relative; }
+.sl-body .react-flow__handle { z-index: 2; }
+.sl-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.sl-outline {
+  fill: #171c24;
+  stroke: #d5deea;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
 }
-.meter { min-width: 140px; }
-.meter-value {
+.sl.is-selected .sl-outline { stroke: var(--accent); stroke-width: 2.1; }
+.sl.is-bad .sl-outline { stroke: var(--danger); }
+.sl-glyph {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 22px;
-  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+.sl-glyph.lg { font-size: 14px; }
+.shape-triangle .sl-glyph { left: 7px; right: 22%; }
+.sl-glyph.inset { left: 18px; right: 16px; }
+.sl-frac {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.05;
+  max-width: 100%;
+}
+.sl-bar {
+  height: 1px;
+  align-self: stretch;
+  min-width: 16px;
+  margin: 2px 0 1px;
+  background: currentColor;
+}
+.sl-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.sl-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.sl-caption {
+  margin-top: 3px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-sign, .sl-port {
+  position: absolute;
+  pointer-events: none;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  line-height: 1;
+}
+.sl-sign {
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+}
+.sl-port { transform: translateY(-50%); font-size: 9px; color: var(--faint); }
+.sl-port.right { transform: translate(-100%, -50%); }
+.display-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #171c24;
+  border: 1.6px solid #d5deea;
+  border-radius: 2px;
+}
+.sl.is-selected .display-face { border-color: var(--accent); }
+.sl.is-bad .display-face { border-color: var(--danger); }
+.display-value {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 14px;
+  padding: 0 8px;
+  pointer-events: none;
 }
 .port-labels {
   position: absolute;
@@ -338,6 +420,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: var(--muted);
   background: #141a16;
   border-style: dashed;
+  border-color: var(--line-strong);
   line-height: 1.4;
 }
 .instrument { width: 240px; }
@@ -353,7 +436,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-bottom: 1px solid var(--line);
 }
 .instrument-canvas { display: block; width: 100%; height: 128px; }
-.plant-canvas { display: block; width: 100%; height: 168px; border-radius: 0 0 10px 10px; }
+.plant-canvas { display: block; width: 100%; height: 168px; }
 
 .tabs { display: flex; gap: 4px; padding: 10px; }
 .tabs button {

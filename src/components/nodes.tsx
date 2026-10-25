@@ -1,13 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { Handle, NodeProps, Position } from 'react-flow-renderer';
-import { blockSummary, getBlock } from '../engine/blocks';
+import { getBlock } from '../engine/blocks';
 import { readPendulumParams } from '../engine/physics';
 import { SIGNAL_COLORS } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
 import { useStore } from '../store';
-import { CATEGORY_COLOR } from '../ui';
 import { drawScope, drawStage, drawXY, ScopeSeries } from './draw';
+import { DiagramBlock } from './shapes';
 
 function useFrame(draw: () => void, deps: React.DependencyList): React.RefObject<HTMLCanvasElement> {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -83,16 +83,16 @@ export const SimNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const bad = useStore((state) => state.errorIds.includes(id));
   if (!def) return null;
   const ports = safePorts(def, info.parameters);
-  const color = CATEGORY_COLOR[def.category] ?? '#8b97a8';
-  const summary = blockSummary(def, info.parameters);
-  const rows = Math.max(ports.inputs.length, ports.outputs.length, 1);
   return (
-    <div className={`block ${selected ? 'is-selected' : ''} ${bad ? 'is-bad' : ''}`} style={{ borderTopColor: color, minHeight: 34 + rows * 18 }}>
-      <Ports inputs={ports.inputs} outputs={ports.outputs} />
-      <div className="block-kicker">{def.name}</div>
-      <div className="block-title">{info.alias || def.name}</div>
-      {summary ? <div className="block-value">{summary}</div> : null}
-    </div>
+    <DiagramBlock
+      blockType={info.blockType}
+      alias={info.alias || def.name}
+      parameters={info.parameters}
+      inputs={ports.inputs}
+      outputs={ports.outputs}
+      selected={!!selected}
+      bad={bad}
+    />
   );
 };
 
@@ -111,12 +111,16 @@ export const MeterNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   }), [id]);
   const digits = Math.max(0, Math.min(6, Number(info.parameters.digits ?? 3)));
   const shown = value === null || !Number.isFinite(value) ? '—' : value.toFixed(digits);
+  const alias = info.alias || def?.name || 'Value';
   return (
-    <div className={`block meter ${selected ? 'is-selected' : ''}`}>
-      <Ports inputs={[{ id: 'in', name: 'in' }]} outputs={[]} labeled={false} />
-      <div className="block-kicker">{def?.name ?? 'Value'}</div>
-      <div className="block-title">{info.alias}</div>
-      <div className="meter-value">{shown}</div>
+    <div className={`sl ${selected ? 'is-selected' : ''}`} style={{ width: 92 }}>
+      <div className="sl-body display-face" style={{ height: 36 }}>
+        <Ports inputs={[{ id: 'in', name: 'in' }]} outputs={[]} labeled={false} />
+        <div className="display-value">{shown}</div>
+      </div>
+      <div className="sl-caption" title={alias}>
+        {alias}
+      </div>
     </div>
   );
 };

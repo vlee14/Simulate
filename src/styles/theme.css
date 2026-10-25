@@ -30,7 +30,7 @@
   --shadow-lift: light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.45));
   --shadow-hover: light-dark(rgba(0, 0, 0, 0.09), rgba(0, 0, 0, 0.5));
   --selection-glow: light-dark(rgba(0, 113, 227, 0.16), rgba(10, 132, 255, 0.28));
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font: system-ui, "Segoe UI Variable", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
