@@ -3,13 +3,17 @@ import { getBlock } from '../engine/blocks';
 import { Param, ParamSpec } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
-import { computeLqr } from '../sim/controller';
+import { computeLqr, resetSim } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
 
 const Q_LABELS = ['x  cart position', 'θ₁  upper angle', 'θ₂  lower angle', 'ẋ  cart velocity', 'ω₁', 'ω₂'];
 
-export const Inspector: React.FC = () => {
+export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
+  mobileOpen,
+  compact,
+  onClose,
+}) => {
   const [tab, setTab] = useState<'block' | 'design'>('block');
   const selectedIds = useStore((state) => state.selectedIds);
   const elements = useStore((state) => state.elements);
@@ -18,13 +22,16 @@ export const Inspector: React.FC = () => {
   const def = data ? getBlock(data.blockType) : undefined;
 
   return (
-    <aside className="inspector">
+    <aside className={mobileOpen ? 'inspector mobile-open' : 'inspector'} aria-hidden={compact && !mobileOpen}>
       <div className="tabs">
         <button className={tab === 'block' ? 'on' : ''} onClick={() => setTab('block')}>
           Properties
         </button>
         <button className={tab === 'design' ? 'on' : ''} onClick={() => setTab('design')}>
           Design
+        </button>
+        <button type="button" className="drawer-close" onClick={onClose}>
+          Close
         </button>
       </div>
       <div className="inspector-scroll">
@@ -109,6 +116,16 @@ function BlockPane({ id, data }: { id: string; data: NodeData }) {
         </section>
       ))}
       {def.category === 'Sinks' ? <ExportButton id={id} /> : null}
+      <button
+        type="button"
+        className="ghost wide delete-block"
+        onClick={() => {
+          resetSim();
+          useStore.getState().removeIds([id]);
+        }}
+      >
+        Delete block
+      </button>
     </div>
   );
 }

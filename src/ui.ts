@@ -1,3 +1,22 @@
+import { useEffect, useState } from 'react';
+
+/** Editor switches to drawers below this width. Match the breakpoint in styles.css. */
+export const COMPACT_LAYOUT = '(max-width: 1040px)';
+
+export function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(query).matches : false
+  );
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const onChange = () => setMatches(media.matches);
+    onChange();
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
 export const CATEGORY_COLOR: Record<string, string> = {
   Sources: '#e7a23a',
   Math: '#5ec8ff',

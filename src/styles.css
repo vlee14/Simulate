@@ -22,6 +22,9 @@
 
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+body { overscroll-behavior: none; }
+button, a, input, select, textarea { touch-action: manipulation; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
@@ -31,10 +34,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .app {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--bg);
   overflow: hidden;
+  padding:
+    env(safe-area-inset-top)
+    env(safe-area-inset-right)
+    env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
 }
 
 .topbar {
@@ -142,6 +151,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-radius: 6px;
   padding: 8px 10px;
 }
+.menu {
+  max-height: min(70vh, 480px);
+  overflow: auto;
+}
+.top-actions button.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(8, 10, 14, 0.45);
+}
 .menu button:hover { background: #262e3b; }
 .menu p {
   margin: 8px 10px 2px;
@@ -227,7 +252,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-bottom: 1px solid #6a3040;
 }
 
-.workspace { flex: 1; min-height: 0; display: flex; }
+.workspace { flex: 1; min-height: 0; display: flex; position: relative; }
 .library, .inspector {
   width: 280px;
   flex: none;
@@ -238,14 +263,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .library { border-right: 1px solid var(--line); }
 .inspector { border-left: 1px solid var(--line); width: 320px; }
-.panel-label, .tabs { padding: 12px 12px 0; }
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 8px;
+}
+.mobile-only { display: none; }
+.drawer-close {
+  display: none;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  border-radius: 8px;
+}
+.drawer-backdrop { display: none; }
+.delete-block { color: var(--danger); margin-top: 12px; }
+.top-actions button.delete-selection { color: var(--danger); }
+.transport button.mobile-only.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .panel-label {
+  padding: 12px 12px 0;
   color: var(--faint);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-size: 10px;
 }
-.search { margin: 10px 12px; }
+.search { margin: 10px 12px; width: calc(100% - 24px); display: block; }
 .library-scroll, .inspector-scroll { overflow: auto; padding: 0 8px 16px; min-height: 0; }
 .library-scroll h3, .pane h3 {
   margin: 14px 8px 6px;
@@ -522,6 +571,204 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .statusbar .running { color: var(--good); }
 .statusbar .error { color: var(--danger); }
 .statusbar .paused, .statusbar .done { color: var(--accent); }
+
+/* Compact layout: phone and narrow tablet. Keep in sync with COMPACT_LAYOUT in ui.ts. */
+@media (max-width: 1040px) {
+  .topbar {
+    height: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "brand actions"
+      "transport transport";
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+  }
+  .brand { grid-area: brand; min-width: 0; gap: 8px; }
+  .doc-title { flex: 1; }
+  .doc-title strong { display: none; }
+  .doc-title input {
+    width: 100%;
+    height: 32px;
+    font-size: 16px;
+    padding-right: 12px;
+  }
+  .transport {
+    grid-area: transport;
+    margin: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .transport > * { flex: none; }
+  .transport .play { order: -3; min-width: 0; }
+  .transport .mobile-only { order: -2; }
+  .top-actions {
+    grid-area: actions;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .top-actions .mini, .save-desktop { display: none; }
+  .topbar .mobile-only {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .clock { min-width: 0; font-size: 14px; }
+  .transport button, .top-actions button:not(.menu-backdrop) { height: 40px; padding: 0 10px; }
+  .brand-mark { width: 40px; height: 40px; display: grid; place-items: center; }
+  .menu button { min-height: 44px; }
+  .react-flow__controls-button { width: 36px; height: 36px; }
+
+  input, select, textarea { font-size: 16px; }
+  .field input, .field select, .field textarea, .search {
+    height: auto;
+    min-height: 44px;
+  }
+
+  .library, .inspector {
+    position: absolute;
+    z-index: 30;
+    top: 0;
+    bottom: 0;
+    width: min(400px, 100%);
+    max-width: 100%;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  }
+  .inspector {
+    left: auto;
+    right: 0;
+    transform: translateX(105%);
+  }
+  .library.mobile-open, .inspector.mobile-open {
+    visibility: visible;
+    pointer-events: auto;
+    transform: none;
+  }
+  .drawer-close { display: inline-flex; }
+  .tabs .drawer-close {
+    flex: none;
+    border: 1px solid var(--line-strong);
+    background: var(--bg-3);
+    color: var(--text);
+  }
+  .pane .wide { min-height: 44px; height: auto; }
+  .drawer-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgba(8, 10, 14, 0.55);
+  }
+
+  .menu {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: auto;
+    bottom: 12px;
+    width: auto;
+    max-height: min(70dvh, 520px);
+    z-index: 45;
+  }
+  .top-actions button.menu-backdrop { z-index: 40; }
+
+  .statusbar {
+    height: auto;
+    min-height: 32px;
+    gap: 8px;
+    padding: 6px 10px;
+  }
+  .statusbar span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .status-hint { display: none; }
+
+  .dock {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    bottom: 8px;
+    max-height: min(68%, 420px);
+  }
+  .dock.open { display: flex; flex-direction: column; }
+  .dock-bar { flex: none; height: auto; min-height: 40px; }
+  .dock-bar span { display: none; }
+  .canvas-wrap:has(.dock.open) .react-flow { height: 100%; }
+  .dock.open .dock-body {
+    height: auto;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    overflow: auto;
+  }
+  .dock.open .stage-canvas {
+    width: 100%;
+    height: 140px;
+    flex: none;
+    border-radius: 0;
+  }
+  .canvas-wrap:has(.dock) .react-flow__controls { top: 10px; bottom: auto; }
+  .nudge-row { flex-wrap: wrap; }
+  .nudge-row button { min-height: 40px; flex: 1 1 30%; }
+}
+
+@media (max-width: 720px) {
+  .home-bar {
+    height: auto;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  .brand { min-width: 0; }
+  .brand em { max-width: none; white-space: normal; }
+  .home-actions { width: 100%; }
+  .home-actions button { flex: 1; min-height: 44px; }
+  .home-main { padding: 16px 16px 32px; }
+  .doc-grid { grid-template-columns: minmax(0, 1fr); }
+  .doc-card footer { flex-wrap: wrap; }
+  .doc-meta { width: 100%; margin-right: 0; }
+  .doc-card footer button { min-height: 40px; }
+}
+
+@media (pointer: coarse) {
+  .lib-item { min-height: 44px; }
+  .slider input { height: 36px; }
+  .react-flow__controls-button { width: 36px; height: 36px; }
+  .react-flow__handle {
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    border: 0;
+  }
+  .react-flow__handle::after {
+    content: "";
+    display: block;
+    width: 10px;
+    height: 10px;
+    margin: 6px;
+    border-radius: 50%;
+    background: #d5deea;
+    border: 2px solid #10141a;
+    box-sizing: border-box;
+  }
+  .menu button { min-height: 44px; }
+}
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2c3544; border-radius: 8px; }

@@ -5,7 +5,11 @@ import { CATEGORY_COLOR } from '../ui';
 import { flowApi } from '../sim/flow';
 import { ShapeMark } from './shapes';
 
-export const Library: React.FC = () => {
+export const Library: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
+  mobileOpen,
+  compact,
+  onClose,
+}) => {
   const addBlock = useStore((state) => state.addBlock);
   const [query, setQuery] = useState('');
   const groups = useMemo(() => {
@@ -35,8 +39,13 @@ export const Library: React.FC = () => {
   };
 
   return (
-    <aside className="library">
-      <div className="panel-label">Library</div>
+    <aside className={mobileOpen ? 'library mobile-open' : 'library'} aria-hidden={compact && !mobileOpen}>
+      <div className="panel-head">
+        <div className="panel-label">Library</div>
+        <button type="button" className="drawer-close" onClick={onClose}>
+          Close
+        </button>
+      </div>
       <input
         className="search"
         placeholder="Search blocks"
@@ -57,7 +66,10 @@ export const Library: React.FC = () => {
                   event.dataTransfer.setData('application/simulate', block.type);
                   event.dataTransfer.effectAllowed = 'move';
                 }}
-                onClick={() => place(block.type)}
+                onClick={() => {
+                  place(block.type);
+                  if (compact) onClose();
+                }}
               >
                 <ShapeMark type={block.type} color={CATEGORY_COLOR[block.category] ?? '#8b97a8'} />
                 <span>

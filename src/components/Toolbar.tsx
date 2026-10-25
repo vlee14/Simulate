@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { EXAMPLES, blankDocument } from '../model/examples';
 import { parseDocument } from '../model/library';
 import { fitDiagram } from '../sim/flow';
@@ -6,7 +6,10 @@ import { pause, play, resetSim } from '../sim/controller';
 import { confirmClose, useStore } from '../store';
 import { downloadText, formatTime } from '../ui';
 
-export const Toolbar: React.FC = () => {
+export const Toolbar: React.FC<{
+  drawer: 'library' | 'inspector' | null;
+  onToggleDrawer: (panel: 'library' | 'inspector') => void;
+}> = ({ drawer, onToggleDrawer }) => {
   const status = useStore((state) => state.status);
   const time = useStore((state) => state.time);
   const name = useStore((state) => state.name);
@@ -18,9 +21,19 @@ export const Toolbar: React.FC = () => {
   const saveLibrary = useStore((state) => state.saveLibrary);
   const saveLibraryCopy = useStore((state) => state.saveLibraryCopy);
   const closeToHome = useStore((state) => state.closeToHome);
+  const selectedIds = useStore((state) => state.selectedIds);
   const [menu, setMenu] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const running = status === 'running';
+
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenu(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menu]);
 
   const openFresh = (create: () => ReturnType<typeof blankDocument>) => {
     if (!confirmClose()) return;
@@ -80,6 +93,22 @@ export const Toolbar: React.FC = () => {
       </div>
 
       <div className="transport">
+        <button
+          type="button"
+          className={drawer === 'library' ? 'mobile-only on' : 'mobile-only'}
+          aria-pressed={drawer === 'library'}
+          onClick={() => onToggleDrawer('library')}
+        >
+          Blocks
+        </button>
+        <button
+          type="button"
+          className={drawer === 'inspector' ? 'mobile-only on' : 'mobile-only'}
+          aria-pressed={drawer === 'inspector'}
+          onClick={() => onToggleDrawer('inspector')}
+        >
+          Inspect
+        </button>
         <button className={running ? 'play on' : 'play'} onClick={() => (running ? pause() : play())}>
           {running ? 'Pause' : status === 'paused' ? 'Resume' : 'Run'}
         </button>
@@ -106,11 +135,29 @@ export const Toolbar: React.FC = () => {
           </select>
         </label>
         <button onClick={() => fitDiagram()}>Fit</button>
-        <button onClick={() => saveLibrary()}>Save</button>
+        <button className="save-desktop" onClick={() => saveLibrary()}>
+          Save
+        </button>
+        {selectedIds.length ? (
+          <button
+            type="button"
+            className="mobile-only delete-selection"
+            onClick={() => {
+              resetSim();
+              useStore.getState().removeIds(useStore.getState().selectedIds);
+            }}
+          >
+            Delete
+          </button>
+        ) : null}
         <div className="menu-wrap">
-          <button onClick={() => setMenu((open) => !open)}>File</button>
+          <button aria-expanded={menu} aria-haspopup="menu" onClick={() => setMenu((open) => !open)}>
+            File
+          </button>
           {menu ? (
-            <div className="menu" onMouseLeave={() => setMenu(false)}>
+            <>
+              <button type="button" className="menu-backdrop" aria-label="Close menu" onClick={() => setMenu(false)} />
+              <div className="menu">
               <button onClick={() => openFresh(blankDocument)}>New model</button>
               <button onClick={leave}>All documents</button>
               <button
@@ -137,7 +184,8 @@ export const Toolbar: React.FC = () => {
                   {example.name}
                 </button>
               ))}
-            </div>
+              </div>
+            </>
           ) : null}
         </div>
         <input

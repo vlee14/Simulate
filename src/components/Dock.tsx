@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { pendulumEnergy, readPendulumParams } from '../engine/physics';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
 import { nudgePlant } from '../sim/controller';
 import { useStore } from '../store';
+import { COMPACT_LAYOUT, useMediaQuery } from '../ui';
 import { drawStage } from './draw';
 
 export const Dock: React.FC = () => {
@@ -14,11 +15,18 @@ export const Dock: React.FC = () => {
   const manual = elements.find((element) => !isEdge(element) && (element.data as NodeData)?.blockType === 'manual');
   const data = plant && !isEdge(plant) ? (plant.data as NodeData) : null;
   const manualData = manual && !isEdge(manual) ? (manual.data as NodeData) : null;
-  const [open, setOpen] = useState(true);
+  const compact = useMediaQuery(COMPACT_LAYOUT);
+  const [open, setOpen] = useState(() => (typeof window === 'undefined' ? true : !window.matchMedia(COMPACT_LAYOUT).matches));
+  const wasCompact = useRef(compact);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => telemetry.subscribe(() => setTick((value) => value + 1)), []);
+
+  useEffect(() => {
+    if (compact && !wasCompact.current) setOpen(false);
+    wasCompact.current = compact;
+  }, [compact]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

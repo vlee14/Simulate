@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Canvas } from './components/Canvas';
 import { Home } from './components/Home';
 import { Inspector } from './components/Inspector';
@@ -6,6 +6,7 @@ import { Library } from './components/Library';
 import { Toolbar } from './components/Toolbar';
 import { installSimulation, resetSim, toggleRun } from './sim/controller';
 import { useStore } from './store';
+import { COMPACT_LAYOUT, useMediaQuery } from './ui';
 
 const App: React.FC = () => {
   const view = useStore((state) => state.view);
@@ -14,6 +15,12 @@ const App: React.FC = () => {
   const status = useStore((state) => state.status);
   const config = useStore((state) => state.config);
   const rate = useStore((state) => state.rate);
+  const compact = useMediaQuery(COMPACT_LAYOUT);
+  const [drawer, setDrawer] = useState<'library' | 'inspector' | null>(null);
+
+  const toggleDrawer = (panel: 'library' | 'inspector') => {
+    setDrawer((current) => (current === panel ? null : panel));
+  };
 
   useEffect(() => {
     installSimulation();
@@ -38,6 +45,19 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  useEffect(() => {
+    if (view === 'home') setDrawer(null);
+  }, [view]);
+
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDrawer(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawer]);
+
   if (view === 'home') {
     return (
       <div className="app">
@@ -49,12 +69,15 @@ const App: React.FC = () => {
 
   return (
     <div className="app">
-      <Toolbar />
+      <Toolbar drawer={drawer} onToggleDrawer={toggleDrawer} />
       {status === 'error' ? <div className="banner">{message}</div> : null}
       <div className="workspace">
-        <Library />
+        <Library mobileOpen={drawer === 'library'} compact={compact} onClose={() => setDrawer(null)} />
         <Canvas key={openSerial} />
-        <Inspector />
+        <Inspector mobileOpen={drawer === 'inspector'} compact={compact} onClose={() => setDrawer(null)} />
+        {drawer ? (
+          <button type="button" className="drawer-backdrop" aria-label="Close panel" onClick={() => setDrawer(null)} />
+        ) : null}
       </div>
       <footer className="statusbar">
         <span className={status}>{message}</span>
@@ -62,7 +85,7 @@ const App: React.FC = () => {
           {config.solver.toUpperCase()} · dt {config.stepSize}s · {config.speed}×
           {rate > 0.05 ? ` · ${rate.toFixed(2)} sim s/s` : ''}
         </span>
-        <span>Space runs · drag blocks in · wire an output to an input</span>
+        <span className="status-hint">Space runs · drag blocks in · wire an output to an input</span>
       </footer>
     </div>
   );
