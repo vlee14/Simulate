@@ -1,7 +1,9 @@
 import { stringifyBlueprint, SubsystemBlueprint } from '../engine/subsystem';
 import { Param, ParamUncertainty } from '../engine/types';
-import { CART_DOUBLE_PENDULUM_ODE } from './plants';
-import { SCENE_CART_PENDULUM, SCENE_MASS_SPRING, SCENE_ROTOR, SCENE_TANK } from './scenes';
+import { CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
+import { SCENE_CART_PENDULUM, SCENE_MASS_SPRING, SCENE_QUAD, SCENE_ROTOR, SCENE_TANK } from './scenes';
+
+const QUAD_NUMERIC = { m: 1.2, Iyy: 0.03, g: 9.81, bw: 0.04 } as const;
 
 const PENDULUM_NUMERIC = {
   Mc: 1,
@@ -245,6 +247,46 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         e('mass', 'x', 'sens', 'in'),
         e('mass', 'x', 'stage', 'x'),
         e('mass', 'v', 'stage', 'v'),
+      ],
+    }),
+  },
+  {
+    id: 'quadrotor',
+    name: 'Quadrotor + target plant',
+    summary: 'Planar quadrotor ODE with coasting target + thrust/torque + Stage chase view.',
+    domain: 'mechanical',
+    create: (origin) => ({
+      nodes: [
+        n('hover', 'constant', origin, 0, 40, { value: QUAD_NUMERIC.m * QUAD_NUMERIC.g }, 'mg hover'),
+        n('manual', 'manual', origin, 0, 140, { value: 0, min: -4, max: 4 }, 'ΔT'),
+        n('tau', 'manual', origin, 0, 240, { value: 0, min: -1.5, max: 1.5 }, 'τ'),
+        n('tsum', 'sum', origin, 180, 80, { signs: '++' }, 'Σ T'),
+        n(
+          'plant',
+          'ode',
+          origin,
+          360,
+          100,
+          { ...QUADROTOR_ODE, ...QUAD_NUMERIC },
+          'Quad + target',
+          {
+            m: unc('percent', 7501, 8),
+            Iyy: unc('percent', 7502, 15),
+          }
+        ),
+        n('stage', 'stage', origin, 600, 100, { ...SCENE_QUAD }, 'Stage'),
+      ],
+      edges: [
+        e('hover', 'out', 'tsum', 'in0'),
+        e('manual', 'out', 'tsum', 'in1'),
+        e('tsum', 'out', 'plant', 'u1'),
+        e('tau', 'out', 'plant', 'u2'),
+        e('plant', 'y0', 'stage', 'x'),
+        e('plant', 'y1', 'stage', 'z'),
+        e('plant', 'y4', 'stage', 'theta'),
+        e('plant', 'y6', 'stage', 'xt'),
+        e('plant', 'y7', 'stage', 'zt'),
+        e('tsum', 'out', 'stage', 'thrust'),
       ],
     }),
   },

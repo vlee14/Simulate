@@ -503,6 +503,59 @@ export const BLOCKS: BlockDefinition[] = [
     },
   },
   {
+    type: 'pronav',
+    category: 'Math',
+    name: 'Pro Nav',
+    description:
+      'True proportional navigation. Inputs are relative (target − interceptor): rx, rz, vrx, vrz. a_cmd = N·Vc·λ̇; ax/az are the inertial components perpendicular to the LOS.',
+    renderer: 'sim',
+    defaultParameters: { N: 3, eps: 0.08 },
+    parameters: [
+      numberField('N', 'Navigation constant N', 'Guidance', 0.1, 'Typical 3…5'),
+      numberField('eps', 'Range floor (m)', 'Guidance', 0.01, 'Avoids /0 when nearly collocated'),
+    ],
+    hasDirectFeedthrough: feed,
+    ports: () => ({
+      inputs: [
+        { id: 'rx', name: 'rx' },
+        { id: 'rz', name: 'rz' },
+        { id: 'vrx', name: 'vrx' },
+        { id: 'vrz', name: 'vrz' },
+      ],
+      outputs: [
+        { id: 'acmd', name: 'a_cmd' },
+        { id: 'ax', name: 'ax' },
+        { id: 'az', name: 'az' },
+        { id: 'los', name: 'λ' },
+        { id: 'vc', name: 'Vc' },
+        { id: 'losrate', name: 'λ̇' },
+      ],
+    }),
+    continuousStates: none,
+    discreteStates: none,
+    outputs: (ctx) => {
+      const rx = ctx.inputs.rx ?? 0;
+      const rz = ctx.inputs.rz ?? 0;
+      const vrx = ctx.inputs.vrx ?? 0;
+      const vrz = ctx.inputs.vrz ?? 0;
+      const N = num(ctx.parameters, 'N', 3);
+      const eps = Math.max(1e-4, num(ctx.parameters, 'eps', 0.08));
+      const r2 = rx * rx + rz * rz;
+      const R = Math.sqrt(Math.max(r2, eps * eps));
+      const los = Math.atan2(rz, rx);
+      const losrate = (rx * vrz - rz * vrx) / Math.max(r2, eps * eps);
+      const vc = -(rx * vrx + rz * vrz) / R;
+      // Signed accel magnitude (positive rotates LOS CCW → inertial dir (−sin λ, cos λ))
+      const acmd = N * vc * losrate;
+      ctx.outputs.acmd = acmd;
+      ctx.outputs.ax = -acmd * Math.sin(los);
+      ctx.outputs.az = acmd * Math.cos(los);
+      ctx.outputs.los = los;
+      ctx.outputs.vc = vc;
+      ctx.outputs.losrate = losrate;
+    },
+  },
+  {
     type: 'integrator',
     category: 'Continuous',
     name: 'Integrator',
@@ -1229,6 +1282,8 @@ export function blockSummary(def: BlockDefinition, parameters: Record<string, Pa
       return text(parameters, 'fn', 'sin');
     case 'fcn':
       return text(parameters, 'expr', 'u');
+    case 'pronav':
+      return `N ${formatCompact(num(parameters, 'N', 3))}`;
     case 'integrator':
       return `x₀ ${formatCompact(num(parameters, 'initialCondition', 0))}`;
     case 'pid':

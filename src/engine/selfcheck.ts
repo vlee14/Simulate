@@ -9,7 +9,10 @@ import {
   pendulumDocument,
   pidDocument,
   pneumaticDocument,
+  quadrotorDocument,
 } from '../model/examples';
+import { SCENE_QUAD } from '../model/scenes';
+import { QUADROTOR_ODE } from '../model/plants';
 import { runExperiment } from './experiments';
 import { encodeDocumentShare, decodeDocumentShare, traceToCsv } from './exportShare';
 import { HistoryStack } from '../sim/history';
@@ -367,6 +370,25 @@ function main(): void {
   assert(!!harm.nodes.find((n) => n.blockType === 'secondorder'), 'harmonic demo uses second-order plant');
   const osc = oscillatorDocument();
   assert(countUncertainParams(documentGraph(osc).nodes) >= 3, 'mass-spring demo MC on m,c,k');
+
+  // Quadrotor Pro-Nav 3-loop demo
+  const quad = quadrotorDocument();
+  assert(!!quad.nodes.find((n) => n.blockType === 'pronav'), 'quad demo has Pro-Nav');
+  assert(quad.nodes.filter((n) => n.blockType === 'pid').length >= 3, 'quad demo has 3 PID loops');
+  assert(!!quad.nodes.find((n) => n.blockType === 'ode'), 'quad demo uses ODE plant');
+  const quadStage = quad.nodes.find((n) => n.blockType === 'stage');
+  assert(!!parseStageConfig(quadStage?.parameters ?? {}).control, 'quad Stage control parses');
+  assert(!!SCENE_QUAD.disturbance, 'quad Stage disturbance defined');
+  const quadEngine = runEngine(quad, 2.5);
+  const plantOut = quadEngine.compiled!.byId.get('plant')!;
+  const xi = plantOut.outputs.y0;
+  const xt = plantOut.outputs.y6;
+  assert(Number.isFinite(xi) && Number.isFinite(xt), 'quad states finite');
+  // Closing: interceptor should move toward inbound target (x increases from 0)
+  assert(xi > 0.5, `PN chase should advance interceptor x, got ${xi}`);
+  const pn = quadEngine.compiled!.byId.get('pn')!;
+  assert(Number.isFinite(pn.outputs.acmd), 'PN a_cmd finite');
+  assert(QUADROTOR_ODE.nx === 10 && QUADROTOR_ODE.nu === 2, 'quad ODE size');
 
   // Lab suite: experiments, sensitivity, synthesis, share, history, observer/kalman.
   const obsDoc = observerDocument();

@@ -1,5 +1,37 @@
 /** Reusable plant parameter packs built from generic Dynamics blocks. */
 
+/**
+ * Planar quadrotor + coasting target in one ODE.
+ * States: [x, z, vx, vz, θ, ω, xt, zt, vxt, vzt]
+ * Inputs: u1 = thrust T, u2 = pitch torque τ
+ * Planar rigid body: v̇x = −(T/m)sinθ, v̇z = (T/m)cosθ − g, ω̇ = τ/Iyy − bω·ω
+ * Target flies at constant velocity (ẋt = vxt, …).
+ */
+export const QUADROTOR_ODE = {
+  form: 'explicit',
+  nx: 10,
+  nu: 2,
+  ny: 10,
+  nq: 2,
+  constants: 'm=1.2; Iyy=0.03; g=9.81; bw=0.04',
+  dx:
+    'x3; ' +
+    'x4; ' +
+    '-(u1/m)*sin(x5); ' +
+    '(u1/m)*cos(x5) - g; ' +
+    'x6; ' +
+    'u2/Iyy - bw*x6; ' +
+    'x9; ' +
+    'x10; ' +
+    '0; ' +
+    '0',
+  M: '1, 0; 0, 1',
+  rhs: '0; 0',
+  y: 'x1; x2; x3; x4; x5; x6; x7; x8; x9; x10',
+  // Interceptor near hover with slight forward speed; target crosses above inbound.
+  x0: '0 2 1.2 0 0 0 12 5 -1.6 -0.35',
+} as const;
+
 export const CART_DOUBLE_PENDULUM_ODE = {
   form: 'mass',
   nq: 3,

@@ -2,10 +2,11 @@ import { getBlock } from '../engine/blocks';
 import { designDynamicsLqr } from '../engine/lqr';
 import { GraphEdge, GraphNode, ParamUncertainty } from '../engine/types';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, DocNode, SimDocument } from './document';
-import { CART_DOUBLE_PENDULUM_ODE } from './plants';
+import { CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
 import {
   SCENE_CART_PENDULUM,
   SCENE_MASS_SPRING,
+  SCENE_QUAD,
   SCENE_ROTOR,
   SCENE_SECOND_ORDER,
   SCENE_TANK,
@@ -433,6 +434,162 @@ export function pneumaticDocument(): SimDocument {
   };
 }
 
+/** Planar quadrotor chase: outer Pro-Nav → mid attitude → inner rate (+ altitude hold). */
+export function quadrotorDocument(): SimDocument {
+  const numeric = { m: 1.2, Iyy: 0.03, g: 9.81, bw: 0.04 } as const;
+  const hoverT = numeric.m * numeric.g;
+  return {
+    name: 'Quadrotor Pro-Nav chase',
+    description:
+      'Planar quadrotor with 3-loop architecture: outer true Pro-Nav guidance, mid pitch attitude, inner pitch-rate; parallel altitude hold. MC on m/Iyy. Stage: alt bias / gust / pitch nudges.',
+    config: mcConfig({ stepSize: 0.002, stopTime: 10, mcCampaignSize: 800, mcOverlayCount: 64 }),
+    design: designConfig({ Q: [4, 8, 1, 2, 20, 4], R: 0.4 }),
+    nodes: [
+      node('note', 'note', 16, 8, {
+        text:
+          '3 loops: Pro Nav (a_cmd) → attitude PID (θ) → rate PID (ω→τ). Altitude PID holds target z. Stage: Alt bias / Gust. Design linearizes the ODE plant.',
+      }),
+
+      // —— Relative geometry (target − interceptor) ——
+      node('rx', 'sum', 16, 120, { signs: '+-' }, 'rx = xt−x'),
+      node('rz', 'sum', 16, 220, { signs: '+-' }, 'rz = zt−z'),
+      node('vrx', 'sum', 16, 320, { signs: '+-' }, 'vrx'),
+      node('vrz', 'sum', 16, 420, { signs: '+-' }, 'vrz'),
+
+      // —— Outer loop: proportional navigation ——
+      node('pn', 'pronav', 200, 200, { N: 4, eps: 0.12 }, 'Pro Nav', 'guidance', {
+        N: unc('percent', 8101, 12),
+      }),
+      // θ_cmd from desired horizontal accel: a_x ≈ −g θ  ⇒  θ ≈ −ax/g
+      node('thcmd', 'fcn', 360, 140, { expr: '-u1/9.81' }, 'θ_cmd ≈ −ax/g'),
+      node('thsat', 'saturation', 500, 140, { upperLimit: 0.55, lowerLimit: -0.55 }, 'θ_cmd sat'),
+
+      // —— Mid loop: attitude ——
+      node('eth', 'sum', 640, 132, { signs: '+-' }, 'eθ'),
+      node(
+        'att',
+        'pid',
+        780,
+        140,
+        { Kp: 8, Ki: 0.2, Kd: 1.2, Tf: 0.03, limitOutput: true, upperLimit: 5, lowerLimit: -5 },
+        'Attitude PID'
+      ),
+
+      // —— Inner loop: rate ——
+      node('ew', 'sum', 940, 132, { signs: '+-' }, 'eω'),
+      node(
+        'rate',
+        'pid',
+        1080,
+        140,
+        { Kp: 3.2, Ki: 0, Kd: 0.04, Tf: 0.02, limitOutput: true, upperLimit: 3, lowerLimit: -3 },
+        'Rate PID'
+      ),
+      node('tausat', 'saturation', 1240, 140, { upperLimit: 3, lowerLimit: -3 }, 'τ sat'),
+
+      // —— Altitude: hover + PN az feedforward + track target z ——
+      node('zbias', 'manual', 200, 420, { value: 0, min: -2, max: 2 }, 'Alt bias'),
+      node('zref', 'sum', 360, 400, { signs: '++' }, 'z ref'),
+      node('ez', 'sum', 500, 400, { signs: '+-' }, 'ez'),
+      node(
+        'alt',
+        'pid',
+        640,
+        408,
+        { Kp: 10, Ki: 5, Kd: 5, Tf: 0.04, limitOutput: true, upperLimit: 10, lowerLimit: -10 },
+        'Altitude PID'
+      ),
+      node('azff', 'fcn', 640, 520, { expr: '1.2*u1' }, 'm·az FF'),
+      node('hover', 'constant', 780, 560, { value: hoverT }, 'mg hover'),
+      node('gust', 'pulse', 900, 560, { amplitude: 5, delay: 1e9, width: 0.25, period: 0 }, 'Gust'),
+      node('tsum', 'sum', 900, 420, { signs: '++++' }, 'Σ T'),
+      node('tsat', 'saturation', 1060, 420, { upperLimit: 30, lowerLimit: 2 }, 'T sat'),
+
+      // —— Plant: planar quadrotor + target ——
+      node(
+        'plant',
+        'ode',
+        1240,
+        360,
+        { ...QUADROTOR_ODE, ...numeric },
+        'Quad + target',
+        'plant',
+        {
+          m: unc('percent', 8102, 8),
+          Iyy: unc('percent', 8103, 15),
+        }
+      ),
+
+      node('scope', 'scope', 1480, 80, { inputCount: 3, timeSpan: 10, autoScale: true, yMin: -1, yMax: 16 }, 'x / xt / z'),
+      node('scope2', 'scope', 1480, 280, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: -1.2, yMax: 1.2 }, 'θ / a_cmd'),
+      node('meter', 'meter', 1480, 480, { digits: 2 }, 'range proxy'),
+      node('rng', 'fcn', 1320, 520, { expr: 'hypot(u1,u2)' }, 'Range'),
+      node('stage', 'stage', 1680, 300, { ...SCENE_QUAD }, 'Stage'),
+    ],
+    edges: [
+      // Relative geometry from plant outputs y0..y9 = x,z,vx,vz,θ,ω,xt,zt,vxt,vzt
+      edge('plant', 'y6', 'rx', 'in0'),
+      edge('plant', 'y0', 'rx', 'in1'),
+      edge('plant', 'y7', 'rz', 'in0'),
+      edge('plant', 'y1', 'rz', 'in1'),
+      edge('plant', 'y8', 'vrx', 'in0'),
+      edge('plant', 'y2', 'vrx', 'in1'),
+      edge('plant', 'y9', 'vrz', 'in0'),
+      edge('plant', 'y3', 'vrz', 'in1'),
+
+      // Outer PN
+      edge('rx', 'out', 'pn', 'rx'),
+      edge('rz', 'out', 'pn', 'rz'),
+      edge('vrx', 'out', 'pn', 'vrx'),
+      edge('vrz', 'out', 'pn', 'vrz'),
+      edge('pn', 'ax', 'thcmd', 'u1'),
+      edge('thcmd', 'out', 'thsat', 'in'),
+
+      // Mid attitude
+      edge('thsat', 'out', 'eth', 'in0'),
+      edge('plant', 'y4', 'eth', 'in1'),
+      edge('eth', 'out', 'att', 'in'),
+
+      // Inner rate
+      edge('att', 'out', 'ew', 'in0'),
+      edge('plant', 'y5', 'ew', 'in1'),
+      edge('ew', 'out', 'rate', 'in'),
+      edge('rate', 'out', 'tausat', 'in'),
+      edge('tausat', 'out', 'plant', 'u2'),
+
+      // Altitude (track target z + PN az feedforward)
+      edge('plant', 'y7', 'zref', 'in0'),
+      edge('zbias', 'out', 'zref', 'in1'),
+      edge('zref', 'out', 'ez', 'in0'),
+      edge('plant', 'y1', 'ez', 'in1'),
+      edge('ez', 'out', 'alt', 'in'),
+      edge('pn', 'az', 'azff', 'u1'),
+      edge('alt', 'out', 'tsum', 'in0'),
+      edge('azff', 'out', 'tsum', 'in1'),
+      edge('hover', 'out', 'tsum', 'in2'),
+      edge('gust', 'out', 'tsum', 'in3'),
+      edge('tsum', 'out', 'tsat', 'in'),
+      edge('tsat', 'out', 'plant', 'u1'),
+
+      // Scopes / Stage
+      edge('plant', 'y0', 'scope', 'in0'),
+      edge('plant', 'y6', 'scope', 'in1'),
+      edge('plant', 'y1', 'scope', 'in2'),
+      edge('plant', 'y4', 'scope2', 'in0'),
+      edge('pn', 'ax', 'scope2', 'in1'),
+      edge('rx', 'out', 'rng', 'u1'),
+      edge('rz', 'out', 'rng', 'u2'),
+      edge('rng', 'out', 'meter', 'in'),
+      edge('plant', 'y0', 'stage', 'x'),
+      edge('plant', 'y1', 'stage', 'z'),
+      edge('plant', 'y4', 'stage', 'theta'),
+      edge('plant', 'y6', 'stage', 'xt'),
+      edge('plant', 'y7', 'stage', 'zt'),
+      edge('tsat', 'out', 'stage', 'thrust'),
+    ],
+  };
+}
+
 /** Luenberger observer + discrete Kalman on an uncertain second-order plant. */
 export function observerDocument(): SimDocument {
   // Plant: ÿ + 2ζωẏ + ω²y = u  → companion A = [[0,1],[-ω²,-2ζω]], B=[[0],[1]], C=[1,0]
@@ -574,6 +731,12 @@ export const EXAMPLES: ExampleTemplate[] = [
     name: 'Observer & Kalman',
     summary: 'Luenberger + discrete Kalman on an uncertain second-order plant.',
     create: observerDocument,
+  },
+  {
+    id: 'quadrotor',
+    name: 'Quadrotor Pro-Nav chase',
+    summary: '3-loop planar quadrotor: Pro-Nav guidance → attitude → rate (+ altitude).',
+    create: quadrotorDocument,
   },
 ];
 
