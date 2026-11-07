@@ -533,6 +533,49 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .poles li.unstable { color: var(--danger); }
 .gain-list li span:last-child { color: var(--accent); }
+.design-actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.design-actions.stacked {
+  flex-direction: column;
+}
+.design-actions .ghost,
+.design-actions .primary {
+  flex: 1;
+}
+.analysis-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.analysis-options .check {
+  align-items: flex-start;
+}
+.analysis-options .check span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.analysis-options .check em {
+  color: var(--faint);
+  font-style: normal;
+  font-size: 11px;
+}
+.report-summary li span {
+  color: var(--text);
+  font-size: 12px;
+}
+.pole-map {
+  margin: 8px 0 12px;
+}
+.pole-map svg {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
 
 .dock {
   position: absolute;

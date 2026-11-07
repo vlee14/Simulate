@@ -1,7 +1,11 @@
+import { getBlock } from '../engine/blocks';
 import { structureSignature, SimCompileError } from '../engine/compile';
 import { designDynamicsLqr } from '../engine/lqr';
+import { linearizeBlock } from '../engine/linearize';
 import { SimulationEngine } from '../engine/runtime';
+import { analyzeStability, formatVector, parseVector } from '../engine/stability';
 import { telemetry } from '../engine/telemetry';
+import { DesignConfig, GraphNode } from '../engine/types';
 import { toGraph } from '../model/elements';
 import { describePoles, useStore } from '../store';
 
@@ -242,23 +246,175 @@ export function fireDisturbance(
   if (engine) engine.rebuildParams(graphNow().nodes);
 }
 
+function findDesignPlant(): GraphNode | null {
+  const state = useStore.getState();
+  const graph = graphNow();
+  const selected = state.selectedIds[0];
+  return (
+    graph.nodes.find((node) => node.id === selected && DESIGNABLE.has(node.blockType)) ??
+    graph.nodes.find((node) => DESIGNABLE.has(node.blockType)) ??
+    null
+  );
+}
+
+function plantStateDim(plant: GraphNode): number {
+  const def = getBlock(plant.blockType);
+  return def?.continuousStates(plant.parameters) ?? 0;
+}
+
+function plantInputDim(plant: GraphNode): number {
+  const def = getBlock(plant.blockType);
+  return Math.max(1, def?.ports(plant.parameters).inputs.length ?? 1);
+}
+
+function defaultPlantX0(plant: GraphNode, n: number): number[] {
+  const p = plant.parameters;
+  if (plant.blockType === 'ode' || plant.blockType === 'statespace') {
+    return parseVector(String(p.x0 ?? ''), n, 0);
+  }
+  if (plant.blockType === 'secondorder') return [Number(p.y0) || 0, Number(p.dy0) || 0].slice(0, n);
+  if (plant.blockType === 'mass') return [Number(p.x0) || 0, Number(p.v0) || 0].slice(0, n);
+  if (plant.blockType === 'inertia') return [Number(p.theta0) || 0, Number(p.w0) || 0].slice(0, n);
+  if (plant.blockType === 'dcmotor') return [Number(p.i0) || 0, Number(p.w0) || 0].slice(0, n);
+  if (plant.blockType === 'rlc') return parseVector(String(p.x0 ?? ''), n, 0);
+  return new Array(n).fill(0);
+}
+
+function resolveOperatingPoint(plant: GraphNode, design: DesignConfig): { x: number[]; u: number[]; label: string } {
+  const n = plantStateDim(plant);
+  const m = plantInputDim(plant);
+  const mode = design.opMode ?? 'equilibrium';
+  if (mode === 'equilibrium') {
+    return { x: new Array(n).fill(0), u: new Array(m).fill(0), label: 'equilibrium (0)' };
+  }
+  if (mode === 'x0') {
+    return { x: defaultPlantX0(plant, n), u: parseVector(design.uOp || '0', m, 0), label: 'plant x₀' };
+  }
+  if (mode === 'live') {
+    const live = engine?.readState(plant.id) ?? [];
+    if (live.length === n) {
+      return { x: live, u: parseVector(design.uOp || '0', m, 0), label: `live @ t=${(engine?.time ?? 0).toFixed(3)} s` };
+    }
+    return { x: defaultPlantX0(plant, n), u: parseVector(design.uOp || '0', m, 0), label: 'live unavailable — used x₀' };
+  }
+  return {
+    x: parseVector(design.xOp || '', n, 0),
+    u: parseVector(design.uOp || '0', m, 0),
+    label: 'custom breakpoint',
+  };
+}
+
+function readControllerGains(n: number): number[] {
+  const graph = graphNow();
+  const K = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const role = `k${i}`;
+    const node = graph.nodes.find((item) => item.id === role || item.role === role);
+    if (!node || node.blockType !== 'gain') continue;
+    // Stored gain is −Kᵢ for u = Σ ki zi
+    K[i] = -Number(node.parameters.k ?? 0);
+  }
+  return K;
+}
+
+function publishDesignView(args: {
+  summary: string;
+  plant: GraphNode;
+  K: number[];
+  appliedGains: { id: string; value: number }[];
+  opLabel: string;
+  A: number[][];
+  B: number[][];
+}): void {
+  const design = useStore.getState().design;
+  const report = analyzeStability(args.A, args.B, args.K, design.analysis?.length ? design.analysis : undefined);
+  useStore.getState().setDesignView({
+    summary: args.summary,
+    open: describePoles(report.polesOpen),
+    closed: describePoles(report.polesClosed),
+    gains: args.appliedGains.length
+      ? args.appliedGains
+      : args.K.map((value, index) => ({ id: `k${index}`, value: -value })),
+    opLabel: args.opLabel,
+    report,
+  });
+}
+
+/** Capture plant x₀ or live state into the custom linearization breakpoint fields. */
+export function captureLinearizationPoint(source: 'x0' | 'live' = 'x0'): void {
+  const plant = findDesignPlant();
+  if (!plant) {
+    useStore.getState().setStatus(useStore.getState().status, 'Select a Dynamics plant to capture an operating point.');
+    return;
+  }
+  const n = plantStateDim(plant);
+  const m = plantInputDim(plant);
+  const design = useStore.getState().design;
+  if (source === 'live') {
+    const live = engine?.readState(plant.id) ?? [];
+    if (live.length !== n) {
+      useStore.getState().setStatus(useStore.getState().status, 'Run the model to capture a live linearization point.');
+      return;
+    }
+    useStore.getState().setDesignOp({ xOp: formatVector(live), uOp: design.uOp || formatVector(new Array(m).fill(0)) });
+    useStore.getState().setDesignOpMode('custom');
+    useStore.getState().setStatus(useStore.getState().status, `Captured live state at t=${(engine?.time ?? 0).toFixed(3)} s`);
+    return;
+  }
+  useStore.getState().setDesignOp({ xOp: formatVector(defaultPlantX0(plant, n)), uOp: design.uOp || '0' });
+  useStore.getState().setDesignOpMode('custom');
+  useStore.getState().setStatus(useStore.getState().status, 'Captured plant x₀ into the custom breakpoint.');
+}
+
+/** Analyze open/closed-loop stability about the selected linearization point (uses current k0… gains). */
+export function analyzeController(): void {
+  const state = useStore.getState();
+  const plant = findDesignPlant();
+  if (!plant) {
+    state.setStatus(state.status, 'Select a Dynamics plant (ODE, State-Space, …) to analyze.');
+    return;
+  }
+  try {
+    const op = resolveOperatingPoint(plant, state.design);
+    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
+    const B1 = B.map((row) => [row[0] ?? 0]);
+    const K = readControllerGains(A.length);
+    publishDesignView({
+      summary: `Stability about ${op.label} on “${plant.blockType}” (current controller gains).`,
+      plant,
+      K,
+      appliedGains: K.map((value, index) => ({ id: `k${index}`, value: -value })),
+      opLabel: op.label,
+      A,
+      B: B1,
+    });
+    const report = useStore.getState().designView?.report;
+    const status = useStore.getState().status;
+    const next = status === 'running' || status === 'paused' ? status : 'idle';
+    useStore.getState().setStatus(next, report?.closedStable ? 'Closed loop looks stable' : 'Closed loop is not Hurwitz', []);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Stability analysis failed';
+    useStore.getState().setDesignView(null);
+    useStore.getState().setStatus(useStore.getState().status, message);
+  }
+}
+
 /**
  * LQR writes −Kᵢ onto gain blocks with role/id `k0`…`k{n-1}`.
  * Optional role `kref` receives +K₀ for reference feedforward on the first state.
+ * Linearizes about the Design-pane operating point.
  */
 export function computeLqr(): void {
   const state = useStore.getState();
   const graph = graphNow();
-  const selected = state.selectedIds[0];
-  const plant =
-    graph.nodes.find((node) => node.id === selected && DESIGNABLE.has(node.blockType)) ??
-    graph.nodes.find((node) => DESIGNABLE.has(node.blockType));
+  const plant = findDesignPlant();
   if (!plant) {
     state.setStatus(state.status, 'Select a Dynamics plant (ODE, State-Space, …) to design a controller.');
     return;
   }
   try {
-    const result = designDynamicsLqr(plant.blockType, plant.parameters, state.design.Q, state.design.R);
+    const op = resolveOperatingPoint(plant, state.design);
+    const result = designDynamicsLqr(plant.blockType, plant.parameters, state.design.Q, state.design.R, op.x, op.u);
     const appliedGains: { id: string; value: number }[] = [];
     let applied = 0;
     result.K.forEach((value, index) => {
@@ -276,16 +432,19 @@ export function computeLqr(): void {
       appliedGains.push({ id: 'kref', value: result.K[0] });
       applied++;
     }
-    useStore.getState().setDesignView({
+    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
+    const B1 = B.map((row) => [row[0] ?? 0]);
+    publishDesignView({
       summary:
         applied > 0
-          ? `Linearized “${plant.blockType}” and wrote ${applied} gain${applied === 1 ? '' : 's'} (roles k0… / kref).`
-          : `Linearized “${plant.blockType}”. Add gain blocks with roles k0, k1, … (and optional kref).`,
-      open: describePoles(result.polesOpen),
-      closed: describePoles(result.polesClosed),
-      gains: appliedGains.length
-        ? appliedGains
-        : result.K.map((value, index) => ({ id: `k${index}`, value: -value })),
+          ? `LQR about ${op.label} on “${plant.blockType}” — wrote ${applied} gain${applied === 1 ? '' : 's'} (k0… / kref).`
+          : `LQR about ${op.label} on “${plant.blockType}”. Add gain blocks with roles k0, k1, … (and optional kref).`,
+      plant,
+      K: result.K,
+      appliedGains,
+      opLabel: op.label,
+      A,
+      B: B1,
     });
     const stable = result.polesClosed.every((pole) => pole.real < 0);
     const status = useStore.getState().status;

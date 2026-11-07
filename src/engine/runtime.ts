@@ -90,6 +90,13 @@ export class SimulationEngine {
     this.capture(true);
   }
 
+  /** Copy continuous state of a block (empty if missing / no states). */
+  readState(blockId: string): number[] {
+    const block = this.compiled?.byId.get(blockId);
+    if (!block || block.stateCount <= 0) return [];
+    return Array.from(this.X.subarray(block.stateOffset, block.stateOffset + block.stateCount));
+  }
+
   private euler(h: number): void {
     const t = this.time;
     this.x0.set(this.X);

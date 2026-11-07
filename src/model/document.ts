@@ -39,4 +39,8 @@ export const DEFAULT_CONFIG: SimConfig = {
 export const DEFAULT_DESIGN: DesignConfig = {
   Q: [40, 20, 20, 10, 0.5, 0.5],
   R: 0.8,
+  opMode: 'equilibrium',
+  xOp: '',
+  uOp: '0',
+  analysis: ['poles', 'ctrb', 'damping', 'margins', 'polemap'],
 };
