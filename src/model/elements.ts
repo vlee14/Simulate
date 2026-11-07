@@ -1,6 +1,6 @@
 import { ArrowHeadType, Edge, Elements, Node } from 'react-flow-renderer';
 import { getBlock } from '../engine/blocks';
-import { GraphEdge, GraphNode, Param } from '../engine/types';
+import { GraphEdge, GraphNode, Param, ParamUncertainty } from '../engine/types';
 import { SimDocument } from './document';
 
 export interface NodeData {
@@ -8,6 +8,7 @@ export interface NodeData {
   alias: string;
   role?: string;
   parameters: Record<string, Param>;
+  uncertainty?: Record<string, ParamUncertainty>;
 }
 
 export function isEdge(element: Node | Edge): element is Edge {
@@ -32,6 +33,7 @@ export function toElements(doc: SimDocument): Elements {
         alias: item.alias ?? def?.name ?? item.blockType,
         role: item.role,
         parameters: { ...(def?.defaultParameters ?? {}), ...(item.parameters ?? {}) },
+        uncertainty: item.uncertainty ? { ...item.uncertainty } : undefined,
       } as NodeData,
       draggable: true,
       selectable: true,
@@ -70,6 +72,7 @@ export function toGraph(elements: Elements): { nodes: GraphNode[]; edges: GraphE
         blockType: data.blockType,
         role: data.role,
         parameters: data.parameters ?? {},
+        uncertainty: data.uncertainty,
       });
     }
   }
@@ -93,6 +96,7 @@ export function toDocument(
       alias: data.alias,
       role: data.role,
       parameters: data.parameters,
+      uncertainty: data.uncertainty,
     };
   });
   const edges = elements.filter(isEdge).map((edge) => ({

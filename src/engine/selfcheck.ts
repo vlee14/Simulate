@@ -1,7 +1,25 @@
 import { PLANT_RECIPES } from '../model/builder';
-import { documentGraph, pendulumDocument, oscillatorDocument, motorDocument, pneumaticDocument } from '../model/examples';
+import {
+  documentGraph,
+  EXAMPLES,
+  harmonicDocument,
+  motorDocument,
+  observerDocument,
+  oscillatorDocument,
+  pendulumDocument,
+  pidDocument,
+  pneumaticDocument,
+  quadrotorDocument,
+} from '../model/examples';
+import { SCENE_QUAD } from '../model/scenes';
+import { QUADROTOR_ODE } from '../model/plants';
+import { runExperiment } from './experiments';
+import { encodeDocumentShare, decodeDocumentShare, traceToCsv } from './exportShare';
+import { HistoryStack } from '../sim/history';
+import { runSensitivity } from './sensitivity';
+import { parsePoleList, placePolesSiso, tunePidImc } from './synthesis';
 import { CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
-import { SCENE_CART_PENDULUM } from '../model/scenes';
+import { SCENE_CART_PENDULUM, SCENE_ROTOR, SCENE_TANK } from '../model/scenes';
 import { compileExpression } from './expr';
 import { SimCompileError, compile } from './compile';
 import { eigenvalues } from './eig';
@@ -9,6 +27,11 @@ import { designDynamicsLqr, lqr } from './lqr';
 import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
 import { parseStageConfig, stageTrailTip } from './scene';
+import { analyzeStability, logspace, parseVector } from './stability';
+import { frequencyResponseBatchCpu, packPlant } from './freqBatch';
+import { sampleMcRange } from './mcSample';
+import { applyMonteCarlo, countUncertainParams, drawNumeric, mixSeed, mulberry32, recommendMcRuns } from './montecarlo';
+import { aggregateCampaign, clampCampaignSize, percentile, pickOverlayRuns } from './mcStats';
 import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
@@ -70,6 +93,28 @@ function main(): void {
   assert(odeLqr.polesClosed.length === 6, `expected 6 closed-loop poles from ODE, got ${odeLqr.polesClosed.length}`);
   assert(odeLqr.polesClosed.every((e) => e.real < 0), 'ODE LQR closed loop should be stable');
 
+  const { A: Aeq, B: Beq } = linearizeBlock('ode', { ...CART_DOUBLE_PENDULUM_ODE }, new Array(6).fill(0), [0]);
+  const reportEq = analyzeStability(Aeq, Beq.map((row) => [row[0] ?? 0]), odeLqr.K);
+  assert(!reportEq.openStable, 'upright open loop should be unstable');
+  assert(reportEq.closedStable, 'LQR closed loop should be Hurwitz');
+  assert(reportEq.controllable, 'cart–pendulum should be controllable at equilibrium');
+  assert(reportEq.modes.length > 0, 'damping analysis should report modes');
+
+  // Custom breakpoint (near tip) still linearizes and yields a report.
+  const xTip = parseVector('0 0.2 -0.1 0 0 0', 6);
+  const { A: Atip, B: Btip } = linearizeBlock('ode', { ...CART_DOUBLE_PENDULUM_ODE }, xTip, [0]);
+  const reportTip = analyzeStability(
+    Atip,
+    Btip.map((row) => [row[0] ?? 0]),
+    odeLqr.K,
+    ['poles', 'ctrb', 'margins', 'bode', 'nyquist', 'nichols', 'rlocus']
+  );
+  assert(reportTip.polesOpen.length === 6, 'breakpoint linearization should keep state dim');
+  assert(reportTip.margins != null, 'margins option should produce a margins block');
+  assert(reportTip.freq.length > 20, `Bode/Nyquist need frequency samples, got ${reportTip.freq.length}`);
+  assert(reportTip.rootLocus.length === 6, `root locus should track ${6} branches`);
+  assert(reportTip.rootLocus[0].points.length > 10, 'root locus branches should be sampled');
+
   const doc = pendulumDocument();
   const designed = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, doc.design.Q, doc.design.R);
   assert(designed.polesClosed.length === 6, `expected 6 closed-loop poles, got ${designed.polesClosed.length}`);
@@ -92,10 +137,36 @@ function main(): void {
   const stageCfg = parseStageConfig(stage!.parameters ?? {});
   assert(stageCfg.elements.length >= 3, 'Stage scene should parse to elements');
   assert(stageCfg.nudge.length >= 1, 'Stage nudge buttons should parse');
+  assert(!!stageCfg.control && stageCfg.control.block === 'manual', 'Stage control should bind to Manual');
+  assert(stageCfg.disturbance.some((item) => item.kind === 'pulse'), 'Stage disturbances should include pulse kicks');
+  assert(stageCfg.interact.some((item) => item.target === 'cart' && item.kind === 'nudge'), 'Stage interact should hit cart');
   const tip = stageTrailTip(stageCfg, { x: 0.1, th1: 0.2, th2: -0.1, force: 1 });
   assert(!!tip && Number.isFinite(tip.x) && Number.isFinite(tip.y), 'trail tip should resolve from scene data');
   assert(String(stage!.parameters?.scene ?? '').includes('"type"'), 'Stage scene is JSON data');
   assert(SCENE_CART_PENDULUM.inputs.includes('th1'), 'scene preset is shared data');
+
+  // Live control + pulse disturbance should update sources without special plant code.
+  const controlProbe = new SimulationEngine(
+    [
+      { id: 'manual', blockType: 'manual', parameters: { value: 0, min: -10, max: 10 } },
+      { id: 'pulse', blockType: 'pulse', parameters: { amplitude: 5, delay: 1e9, width: 0.2, period: 0 } },
+      { id: 'sum', blockType: 'sum', parameters: { signs: '++' } },
+    ],
+    [
+      { id: 'e1', source: 'manual', sourceHandle: 'out', target: 'sum', targetHandle: 'in0' },
+      { id: 'e2', source: 'pulse', sourceHandle: 'out', target: 'sum', targetHandle: 'in1' },
+    ],
+    { solver: 'rk4', stepSize: 0.01, stopTime: 1, startTime: 0, speed: 1 }
+  );
+  controlProbe.compile();
+  controlProbe.reset();
+  controlProbe.rebuildParams([
+    { id: 'manual', blockType: 'manual', parameters: { value: 3, min: -10, max: 10 } },
+    { id: 'pulse', blockType: 'pulse', parameters: { amplitude: 5, delay: 0, width: 0.2, period: 0 } },
+    { id: 'sum', blockType: 'sum', parameters: { signs: '++' } },
+  ]);
+  controlProbe.step(0.01);
+  close(controlProbe.compiled!.byId.get('sum')!.outputs.out, 8, 1e-9, 'manual+pulse feedthrough');
 
   const engine = runEngine(doc, 14);
   const plant = engine.compiled!.byId.get('plant')!;
@@ -163,6 +234,231 @@ function main(): void {
   eng.reset();
   eng.step(0.01);
   close(eng.compiled!.byId.get('s')!.outputs.out, 2.5, 1e-9, 'sensor gain/bias');
+
+  // Monte Carlo: run 0 = nominal; seeded draws are stable per parameter seed.
+  const unc = { kind: 'normal' as const, seed: 0xc0ffee, spread: 0.5 };
+  close(drawNumeric(1, unc, 0), 1, 0, 'MC run 0 is nominal');
+  const d1 = drawNumeric(1, unc, 1);
+  const d1b = drawNumeric(1, unc, 1);
+  close(d1, d1b, 0, 'same seed+run ⇒ same draw');
+  assert(Math.abs(d1 - 1) > 1e-6, 'run 1 should differ from nominal (almost surely)');
+  const d2 = drawNumeric(1, unc, 2);
+  assert(Math.abs(d2 - d1) > 1e-12, 'different runs should differ');
+  const otherSeed = { ...unc, seed: 0xbadc0de };
+  assert(Math.abs(drawNumeric(1, otherSeed, 1) - d1) > 1e-12, 'different param seeds should differ');
+  // Graph apply: only numeric params with uncertainty change; run 0 untouched.
+  const mcNodes = [
+    {
+      id: 'mass',
+      blockType: 'mass',
+      parameters: { m: 1, x0: 0, v0: 0 } as Record<string, number>,
+      uncertainty: { m: unc },
+    },
+    { id: 'gain', blockType: 'gain', parameters: { k: 3 } as Record<string, number> },
+  ];
+  const nominalGraph = applyMonteCarlo(mcNodes, 0);
+  close(Number(nominalGraph[0].parameters.m), 1, 0, 'MC graph run 0 keeps m');
+  const run1 = applyMonteCarlo(mcNodes, 1);
+  close(Number(run1[0].parameters.m), d1, 1e-12, 'MC graph uses same draw as drawNumeric');
+  close(Number(run1[1].parameters.k), 3, 0, 'params without uncertainty stay nominal');
+  // RNG mix is deterministic
+  close(mixSeed(1, 1), mixSeed(1, 1), 0, 'mixSeed stable');
+  const u = mulberry32(1)();
+  assert(u >= 0 && u < 1, 'mulberry32 in [0,1)');
+
+  close(countUncertainParams(mcNodes), 1, 0, 'one uncertain param counted');
+  const noneAdvice = recommendMcRuns([]);
+  assert(noneAdvice.recommended === 0, 'no-params recommendation is 0');
+
+  // CLT: N = (z·CV/ε)² with CV from percent spread 10% on one param → CV=0.1
+  const cltNodes = [
+    {
+      id: 'm',
+      blockType: 'mass',
+      parameters: { m: 2, x0: 0, v0: 0 } as Record<string, number>,
+      uncertainty: { m: { kind: 'percent' as const, seed: 1, spread: 10 } },
+    },
+  ];
+  const clt = recommendMcRuns(cltNodes, { confidence: 0.95, relError: 0.05, tailQuantile: 0.95, tailCdfError: 0.02 });
+  close(clt.cv, 0.1, 1e-9, 'percent 10 → CV 0.1');
+  // (1.96*0.1/0.05)^2 ≈ 15.37 → ceil 16 → floored at 30
+  close(clt.mean, 30, 0, 'CLT mean floored at 30');
+  assert(clt.tails >= clt.mean, 'tails N ≥ mean N');
+  assert(clt.screening === clt.mean * (2 * clt.params + 2), 'Saltelli N=M(2p+2)');
+  close(clt.recommended, clt.mean, 0, 'primary recommendation is CLT mean');
+
+  // Two uncorrelated 10% params → CV = √2 · 0.1
+  const two = recommendMcRuns(
+    [
+      ...cltNodes,
+      {
+        id: 'c',
+        blockType: 'damper',
+        parameters: { c: 1 } as Record<string, number>,
+        uncertainty: { c: { kind: 'percent' as const, seed: 2, spread: 10 } },
+      },
+    ],
+    { confidence: 0.95, relError: 0.05 }
+  );
+  close(two.cv, Math.SQRT2 * 0.1, 1e-9, 'RSS CV for two 10% params');
+  assert(two.mean > clt.mean, 'more variance ⇒ larger CLT N');
+
+  close(clampCampaignSize(50_000), 10_000, 0, 'campaign cap 10k');
+  close(percentile([1, 2, 3, 4, 5], 0.5), 3, 0, 'median');
+  assert(pickOverlayRuns(1000, 8).length === 8, 'overlay picker length');
+  const overlayHasSelected = pickOverlayRuns(100, 10, 42);
+  assert(!!overlayHasSelected.includes(42), 'overlay keeps selected run');
+
+  // Tiny second-order plant campaign samples
+  const plantNodes = [
+    {
+      id: 'plant',
+      blockType: 'secondorder',
+      parameters: { wn: 2, zeta: 0.3, y0: 0, dy0: 0 } as Record<string, number>,
+      uncertainty: { wn: { kind: 'percent' as const, seed: 9, spread: 5 } },
+    },
+  ];
+  const samples = sampleMcRange({
+    plantId: 'plant',
+    blockType: 'secondorder',
+    nodes: plantNodes as any,
+    xOp: [0, 0],
+    uOp: [0],
+    K: [1, 0.5],
+    runStart: 1,
+    runEnd: 12,
+    computeFreq: true,
+    nOmega: 32,
+  });
+  assert(samples.length >= 8, `expected MC samples, got ${samples.length}`);
+  const ws = logspace(1e-3, 1e3, 32);
+  const stats = aggregateCampaign(samples, ws, { overlayCount: 6, backend: 'cpu', elapsedMs: 1 });
+  assert(stats.ok === samples.length, 'aggregate ok count');
+  assert(!!(stats.bodeMag && stats.bodeMag.p50.length === 32), 'bode band width');
+  assert(stats.overlayRuns.length <= 6, 'overlay capped');
+
+  const packed = samples.filter((s) => s.n).map((s) => {
+    // rebuild from poles path — pack via linearize already in sample when keepAB
+    return packPlant(
+      [
+        [0, 1],
+        [-4, -1.2],
+      ],
+      [[0], [1]]
+    );
+  });
+  const batch = frequencyResponseBatchCpu(packed.slice(0, 3), [1, 0.5], ws);
+  assert(batch.length === 3 * 32 * 4, 'CPU Bode batch shape');
+  assert(Number.isFinite(batch[2]), 'CPU Bode mag finite');
+
+  // Demos ship with MC uncertainty + campaign defaults + Stage bindings.
+  for (const example of EXAMPLES) {
+    const demo = example.create();
+    const graph = documentGraph(demo);
+    const uncertain = countUncertainParams(graph.nodes);
+    assert(uncertain > 0, `${example.id} should enable Monte Carlo distributions`);
+    assert((demo.config.mcCampaignSize ?? 0) >= 500, `${example.id} should set an MC campaign size`);
+    assert(demo.design.analysis.includes('bode'), `${example.id} should enable Bode in Design`);
+  }
+  assert(!!SCENE_ROTOR.control && !!SCENE_ROTOR.disturbance, 'rotor Stage should expose control + disturbance');
+  assert(!!SCENE_TANK.control && !!SCENE_TANK.disturbance, 'tank Stage should expose control + disturbance');
+  const motorStage = motorDocument().nodes.find((n) => n.blockType === 'stage');
+  assert(!!parseStageConfig(motorStage?.parameters ?? {}).control, 'motor demo Stage control parses');
+  const pid = pidDocument();
+  assert(!!pid.nodes.find((n) => n.blockType === 'stage'), 'PID demo includes Stage');
+  const harm = harmonicDocument();
+  assert(!!harm.nodes.find((n) => n.blockType === 'secondorder'), 'harmonic demo uses second-order plant');
+  const osc = oscillatorDocument();
+  assert(countUncertainParams(documentGraph(osc).nodes) >= 3, 'mass-spring demo MC on m,c,k');
+
+  // Quadrotor Pro-Nav 3-loop demo
+  const quad = quadrotorDocument();
+  assert(!!quad.nodes.find((n) => n.blockType === 'pronav'), 'quad demo has Pro-Nav');
+  assert(quad.nodes.filter((n) => n.blockType === 'pid').length >= 3, 'quad demo has 3 PID loops');
+  assert(!!quad.nodes.find((n) => n.blockType === 'ode'), 'quad demo uses ODE plant');
+  const quadStage = quad.nodes.find((n) => n.blockType === 'stage');
+  assert(!!parseStageConfig(quadStage?.parameters ?? {}).control, 'quad Stage control parses');
+  assert(!!SCENE_QUAD.disturbance, 'quad Stage disturbance defined');
+  const quadEngine = runEngine(quad, 6);
+  const plantOut = quadEngine.compiled!.byId.get('plant')!;
+  const xi = plantOut.outputs.y0;
+  const zi = plantOut.outputs.y1;
+  const xt = plantOut.outputs.y6;
+  assert(Number.isFinite(xi) && Number.isFinite(xt), 'quad states finite');
+  assert(xi > 1, `PN chase should advance interceptor x, got ${xi}`);
+  assert(Math.abs(zi) < 12 && Math.abs(xi) < 20, `quad should stay bounded, x=${xi} z=${zi}`);
+  const range = Math.hypot(xt - xi, plantOut.outputs.y7 - zi);
+  assert(range < 8, `range should close under PN, R=${range}`);
+  const pn = quadEngine.compiled!.byId.get('pn')!;
+  assert(Number.isFinite(pn.outputs.acmd) && Math.abs(pn.outputs.acmd) < 20, 'PN a_cmd finite/clamped');
+  assert(QUADROTOR_ODE.nx === 10 && QUADROTOR_ODE.nu === 2, 'quad ODE size');
+
+  // Lab suite: experiments, sensitivity, synthesis, share, history, observer/kalman.
+  const obsDoc = observerDocument();
+  assert(!!obsDoc.nodes.find((n) => n.blockType === 'observer'), 'observer demo has Luenberger');
+  assert(!!obsDoc.nodes.find((n) => n.blockType === 'kalman'), 'observer demo has Kalman');
+  const obsEngine = runEngine(obsDoc, 1.5);
+  const obsBlock = obsEngine.compiled!.byId.get('obs')!;
+  assert(Number.isFinite(obsBlock.outputs.x0), 'observer x̂0 finite');
+  const kfBlock = obsEngine.compiled!.byId.get('kf')!;
+  assert(Number.isFinite(kfBlock.outputs.x0), 'kalman x̂0 finite');
+
+  const pidGraph = documentGraph(pidDocument());
+  const exp = runExperiment(pidGraph.nodes, pidGraph.edges, pidDocument().config, {
+    kind: 'step',
+    outputBlock: 'plant',
+    outputPort: 'y',
+    inputBlock: 'ref',
+    stopTime: 4,
+    stepSize: 0.005,
+    mcRuns: 8,
+  });
+  assert(exp.nominal.trace.t.length > 10, 'experiment trace length');
+  assert(!!exp.envelope && exp.envelope.p50.length > 5, 'experiment MC envelope');
+  assert(traceToCsv(exp.nominal.trace.t, exp.nominal.trace.y).includes('\n'), 'CSV export');
+
+  const sens = runSensitivity(pidGraph.nodes, pidGraph.edges, pidDocument().config, {
+    outputBlock: 'plant',
+    outputPort: 'y',
+    inputBlock: 'ref',
+    kind: 'step',
+    metric: 'settlingTime',
+  });
+  assert(sens.tornado.length >= 1, 'tornado has bars');
+  assert(sens.sobolFirst.length >= 1, 'sobol proxy ranks');
+
+  const poles = parsePoleList('-2 -3');
+  assert(poles.length === 2, 'parse real poles');
+  const place = placePolesSiso(
+    [
+      [0, 1],
+      [-2, -0.8],
+    ],
+    [[0], [1]],
+    poles
+  );
+  assert(place.K.length === 2, 'Ackermann K length');
+  assert(place.polesClosed.every((p) => p.real < 0), 'placed poles stable');
+  const tuned = tunePidImc('secondorder', { wn: 2, zeta: 0.3, K: 1 });
+  assert(tuned.Kp !== 0 && tuned.Ki !== 0, 'IMC PID gains');
+
+  const roundTrip = decodeDocumentShare(encodeDocumentShare(obsDoc));
+  assert(roundTrip.name === obsDoc.name && roundTrip.nodes.length === obsDoc.nodes.length, 'share encode round-trip');
+
+  const hist = new HistoryStack();
+  const snapA = {
+    elements: [],
+    name: 'A',
+    description: '',
+    config: { ...obsDoc.config },
+    design: { ...obsDoc.design!, Q: (obsDoc.design?.Q ?? []).slice(), analysis: (obsDoc.design?.analysis ?? []).slice() },
+  };
+  hist.push(snapA);
+  const snapB = { ...snapA, name: 'B' };
+  const undone = hist.undo(snapB);
+  assert(undone?.name === 'A', 'history undo');
+  const redone = hist.redo(undone!);
+  assert(redone?.name === 'B', 'history redo');
 
   console.log('selfcheck ok');
 }

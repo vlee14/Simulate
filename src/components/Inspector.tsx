@@ -1,21 +1,34 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
-import { Param, ParamSpec } from '../engine/types';
+import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
+import { countUncertainParams, describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
+import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
-import { isEdge, NodeData } from '../model/elements';
-import { computeLqr, resetSim } from '../sim/controller';
+import { isEdge, NodeData, toGraph } from '../model/elements';
+import { formatEta } from '../engine/mcCampaignRunner';
+import { MC_CAMPAIGN_MAX, MC_OVERLAY_MAX } from '../engine/mcStats';
+import { analyzeController, captureLinearizationPoint, computeLqr, resetSim, runSelectedMc, selectMcRun } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
+import { LabPane } from './LabPane';
+import { StabilityPlotGrid } from './StabilityPlots';
 
 const Q_LABELS = ['Q₁ (x₁)', 'Q₂ (x₂)', 'Q₃ (x₃)', 'Q₄ (x₄)', 'Q₅ (x₅)', 'Q₆ (x₆)'];
+
+const OP_MODES: { id: LinearizationPoint; label: string }[] = [
+  { id: 'equilibrium', label: 'Equilibrium (0)' },
+  { id: 'x0', label: 'Plant x₀' },
+  { id: 'live', label: 'Live simulation state' },
+  { id: 'custom', label: 'Custom breakpoint' },
+];
 
 export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
   mobileOpen,
   compact,
   onClose,
 }) => {
-  const [tab, setTab] = useState<'block' | 'design'>('block');
+  const [tab, setTab] = useState<'block' | 'design' | 'lab'>('block');
   const selectedIds = useStore((state) => state.selectedIds);
   const elements = useStore((state) => state.elements);
   const selected = elements.find((element) => element.id === selectedIds[0] && !isEdge(element));
@@ -31,12 +44,23 @@ export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClos
         <button className={tab === 'design' ? 'on' : ''} onClick={() => setTab('design')}>
           Design
         </button>
+        <button className={tab === 'lab' ? 'on' : ''} onClick={() => setTab('lab')}>
+          Lab
+        </button>
         <button type="button" className="drawer-close" onClick={onClose}>
           Close
         </button>
       </div>
       <div className="inspector-scroll">
-        {tab === 'design' ? <DesignPane /> : data && def && selected ? <BlockPane id={selected.id} data={data} /> : <ModelPane />}
+        {tab === 'lab' ? (
+          <LabPane />
+        ) : tab === 'design' ? (
+          <DesignPane />
+        ) : data && def && selected ? (
+          <BlockPane id={selected.id} data={data} />
+        ) : (
+          <ModelPane />
+        )}
       </div>
     </aside>
   );
@@ -46,8 +70,21 @@ function ModelPane() {
   const name = useStore((state) => state.name);
   const description = useStore((state) => state.description);
   const config = useStore((state) => state.config);
+  const elements = useStore((state) => state.elements);
   const setConfig = useStore((state) => state.setConfig);
   const setMeta = useStore((state) => state.setMeta);
+  const mcRun = config.mcRun ?? 0;
+  const mcConfidence = config.mcConfidence ?? 0.95;
+  const mcRelError = config.mcRelError ?? 0.05;
+  const mcTailQuantile = config.mcTailQuantile ?? 0.95;
+  const advice = useMemo(() => {
+    const graph = toGraph(elements);
+    return recommendMcRuns(graph.nodes, {
+      confidence: mcConfidence,
+      relError: mcRelError,
+      tailQuantile: mcTailQuantile,
+    });
+  }, [elements, mcConfidence, mcRelError, mcTailQuantile]);
   return (
     <div className="pane">
       <h2>Document</h2>
@@ -79,6 +116,103 @@ function ModelPane() {
           ))}
         </select>
       </label>
+      <h3>Monte Carlo</h3>
+      <NumberField
+        label="Simulation run"
+        help="0 = nominal values. n>0 draws each distributed parameter from its fixed seed (same run ⇒ same draws)."
+        value={mcRun}
+        step={1}
+        onCommit={(value) => setConfig({ mcRun: Math.max(0, Math.round(value)) })}
+      />
+      <div className="design-actions">
+        <button type="button" className="ghost" onClick={() => setConfig({ mcRun: 0 })}>
+          Nominal (0)
+        </button>
+        <button type="button" className="ghost" onClick={() => setConfig({ mcRun: mcRun + 1 })}>
+          Next run
+        </button>
+      </div>
+      <h3>Sample-size targets</h3>
+      <label className="field">
+        <span>Confidence</span>
+        <select
+          value={String(mcConfidence)}
+          onChange={(event) => setConfig({ mcConfidence: Number(event.target.value) })}
+        >
+          <option value="0.9">90%</option>
+          <option value="0.95">95%</option>
+          <option value="0.99">99%</option>
+        </select>
+        <em>Two-sided normal CI for the CLT mean formula.</em>
+      </label>
+      <NumberField
+        label="Mean relative half-width ε"
+        help="Want |μ̂−μ| ≤ ε|μ| with the chosen confidence (default 5%)."
+        value={mcRelError}
+        step={0.01}
+        onCommit={(value) => setConfig({ mcRelError: Math.min(0.5, Math.max(0.005, value)) })}
+      />
+      <NumberField
+        label="Tail quantile q"
+        help="Percentile of interest for the tail sample-size formula (e.g. 0.95)."
+        value={mcTailQuantile}
+        step={0.01}
+        onCommit={(value) => setConfig({ mcTailQuantile: Math.min(0.999, Math.max(0.5, value)) })}
+      />
+      <div className="mc-advice">
+        <p className="lede">{advice.summary}</p>
+        {advice.params > 0 ? (
+          <>
+            <ul className="gain-list">
+              <li>
+                <span>Uncertain params</span>
+                <span>{advice.params}</span>
+              </li>
+              <li>
+                <span>Proxy CV</span>
+                <span>{advice.cv.toFixed(3)}</span>
+              </li>
+              <li>
+                <span>Pilot (≈N/4)</span>
+                <span>1…{advice.explore}</span>
+              </li>
+              <li>
+                <span>CLT mean</span>
+                <span>1…{advice.mean}</span>
+              </li>
+              <li>
+                <span>Tails / quantile</span>
+                <span>1…{advice.tails}</span>
+              </li>
+              <li>
+                <span>Saltelli screen</span>
+                <span>1…{advice.screening}</span>
+              </li>
+            </ul>
+            <div className="design-actions">
+              <button type="button" className="ghost" onClick={() => setConfig({ mcRun: 1 })}>
+                Start run 1
+              </button>
+              <button type="button" className="ghost" onClick={() => setConfig({ mcRun: advice.recommended })}>
+                Jump to {advice.recommended}
+              </button>
+            </div>
+            <p className="hint">{advice.detail}</p>
+            {mcRun > 0 ? (
+              <p className="hint">
+                Progress vs CLT mean: {Math.min(mcRun, advice.mean)} / {advice.mean}
+                {mcRun >= advice.mean ? ' · mean N met' : ''}
+                {mcRun >= advice.tails ? ' · tails N met' : ''}
+                {mcRun >= advice.screening ? ' · screening N met' : ''}
+              </p>
+            ) : (
+              <p className="hint">You are on nominal (run 0). Use runs 1…N for the campaign.</p>
+            )}
+          </>
+        ) : (
+          <p className="hint">{advice.detail}</p>
+        )}
+      </div>
       <p className="hint">Initial conditions are read when you press Run. Gains and plant parameters update live.</p>
     </div>
   );
@@ -87,7 +221,9 @@ function ModelPane() {
 function BlockPane({ id, data }: { id: string; data: NodeData }) {
   const def = getBlock(data.blockType)!;
   const updateParam = useStore((state) => state.updateParam);
+  const updateUncertainty = useStore((state) => state.updateUncertainty);
   const updateAlias = useStore((state) => state.updateAlias);
+  const mcRun = useStore((state) => state.config.mcRun ?? 0);
   const groups = useMemo(() => {
     const map = new Map<string, ParamSpec[]>();
     for (const spec of def.parameters) {
@@ -112,7 +248,18 @@ function BlockPane({ id, data }: { id: string; data: NodeData }) {
         <section key={group}>
           <h3>{group}</h3>
           {specs.map((spec) => (
-            <ParamField key={spec.key} spec={spec} value={data.parameters[spec.key]} onCommit={(value) => updateParam(id, spec.key, value)} />
+            <ParamField
+              key={spec.key}
+              spec={spec}
+              value={data.parameters[spec.key]}
+              uncertainty={data.uncertainty?.[spec.key]}
+              mcRun={mcRun}
+              onCommit={(value) => updateParam(id, spec.key, value)}
+              onUncertainty={(patch) => {
+                useStore.getState().checkpoint();
+                updateUncertainty(id, spec.key, patch);
+              }}
+            />
           ))}
         </section>
       ))}
@@ -170,11 +317,32 @@ function ScopeMetrics({ id }: { id: string }) {
   );
 }
 
-function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param | undefined; onCommit: (value: Param) => void }) {
+function ParamField({
+  spec,
+  value,
+  uncertainty,
+  mcRun,
+  onCommit,
+  onUncertainty,
+}: {
+  spec: ParamSpec;
+  value: Param | undefined;
+  uncertainty?: ParamUncertainty;
+  mcRun: number;
+  onCommit: (value: Param) => void;
+  onUncertainty: (patch: { kind: DistKind; spread?: number } | null) => void;
+}) {
   if (spec.type === 'boolean') {
     return (
       <label className="check">
-        <input type="checkbox" checked={value === true} onChange={(event) => onCommit(event.target.checked)} />
+        <input
+          type="checkbox"
+          checked={value === true}
+          onChange={(event) => {
+            useStore.getState().checkpoint();
+            onCommit(event.target.checked);
+          }}
+        />
         <span>{spec.label}</span>
       </label>
     );
@@ -183,7 +351,13 @@ function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param |
     return (
       <label className="field">
         <span>{spec.label}</span>
-        <select value={String(value ?? '')} onChange={(event) => onCommit(event.target.value)}>
+        <select
+          value={String(value ?? '')}
+          onChange={(event) => {
+            useStore.getState().checkpoint();
+            onCommit(event.target.value);
+          }}
+        >
           {spec.options?.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -194,23 +368,89 @@ function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param |
     );
   }
   if (spec.type === 'string') {
-    return (
-      <label className="field">
-        <span>{spec.label}</span>
-        {spec.wide ? (
-          <textarea
-            rows={spec.key === 'scene' ? 6 : spec.key === 'text' ? 4 : 2}
-            value={String(value ?? '')}
-            onChange={(event) => onCommit(event.target.value)}
-          />
-        ) : (
-          <input value={String(value ?? '')} onChange={(event) => onCommit(event.target.value)} />
-        )}
-        {spec.help ? <em>{spec.help}</em> : null}
-      </label>
-    );
+    return <StringParamField spec={spec} value={String(value ?? '')} onCommit={onCommit} />;
   }
-  return <NumberField label={spec.label} help={spec.help} value={Number(value ?? 0)} step={spec.step} onCommit={onCommit} />;
+  const nominal = Number(value ?? 0);
+  const kind = uncertainty?.kind ?? 'none';
+  const drawn = kind !== 'none' ? drawNumeric(nominal, uncertainty, mcRun) : nominal;
+  return (
+    <div className="param-with-dist">
+      <NumberField label={spec.label} help={spec.help} value={nominal} step={spec.step} onCommit={onCommit} />
+      <div className="dist-row">
+        <label className="field compact">
+          <span>Distribution</span>
+          <select
+            value={kind}
+            onChange={(event) => {
+              const next = event.target.value as DistKind;
+              onUncertainty(next === 'none' ? null : { kind: next, spread: uncertainty?.spread });
+            }}
+          >
+            {DIST_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {kind !== 'none' ? (
+          <NumberField
+            label={kind === 'percent' ? '±%' : kind === 'uniform' ? 'Half-width' : 'σ'}
+            value={uncertainty?.spread ?? 0}
+            step={kind === 'percent' ? 1 : 0.01}
+            onCommit={(spread) => onUncertainty({ kind, spread: Math.max(0, spread) })}
+          />
+        ) : null}
+      </div>
+      {kind !== 'none' ? (
+        <p className="hint dist-hint">
+          seed {uncertainty?.seed ?? '—'} · {describeDraw(uncertainty, nominal, mcRun)}
+          {mcRun > 0 ? ` (sim uses ${drawn})` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function StringParamField({
+  spec,
+  value,
+  onCommit,
+}: {
+  spec: ParamSpec;
+  value: string;
+  onCommit: (value: Param) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    if (text === value) return;
+    useStore.getState().checkpoint();
+    onCommit(text);
+  };
+  return (
+    <label className="field">
+      <span>{spec.label}</span>
+      {spec.wide ? (
+        <textarea
+          rows={spec.key === 'scene' ? 6 : spec.key === 'text' ? 4 : 2}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+        />
+      ) : (
+        <input
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+          }}
+        />
+      )}
+      {spec.help ? <em>{spec.help}</em> : null}
+    </label>
+  );
 }
 
 function NumberField({
@@ -237,8 +477,13 @@ function NumberField({
         onChange={(event) => setText(event.target.value)}
         onBlur={() => {
           const next = Number(text);
-          if (Number.isFinite(next)) onCommit(next);
-          else setText(formatInput(value));
+          if (!Number.isFinite(next)) {
+            setText(formatInput(value));
+            return;
+          }
+          if (next === value) return;
+          useStore.getState().checkpoint();
+          onCommit(next);
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
@@ -252,14 +497,180 @@ function NumberField({
 function DesignPane() {
   const design = useStore((state) => state.design);
   const view = useStore((state) => state.designView);
+  const config = useStore((state) => state.config);
+  const mcRun = config.mcRun ?? 0;
+  const elements = useStore((state) => state.elements);
+  const setConfig = useStore((state) => state.setConfig);
   const setDesignWeight = useStore((state) => state.setDesignWeight);
   const setDesignR = useStore((state) => state.setDesignR);
+  const setDesignOpMode = useStore((state) => state.setDesignOpMode);
+  const setDesignOp = useStore((state) => state.setDesignOp);
+  const setDesignAnalysis = useStore((state) => state.setDesignAnalysis);
+  const report = view?.report;
+  const nominalReport = view?.nominalReport ?? report ?? null;
+  const ensemble = view?.mcEnsemble ?? [];
+  const campaign = view?.mcCampaign ?? null;
+  const progress = view?.mcCampaignProgress ?? null;
+  const selectedRun = view?.selectedRun ?? mcRun;
+  const uncertainCount = useMemo(() => countUncertainParams(toGraph(elements).nodes), [elements]);
+  const show = (option: AnalysisOption) => (design.analysis ?? []).includes(option);
+  const campaignSize = config.mcCampaignSize ?? 1000;
+  const overlayCount = config.mcOverlayCount ?? 96;
+  const showAllLines = !!config.mcShowAllLines;
+
   return (
     <div className="pane">
-      <h2>LQR design</h2>
+      <h2>Control design</h2>
       <p className="lede">
-        Linearize the selected Dynamics plant (ODE, State-Space, Second-Order, …) about equilibrium and write −Kᵢ onto gain blocks with roles k0, k1, … (optional kref gets +K₀).
+        Pick a linearization / breakpoint, choose stability reports, then analyze the current controller or compute LQR onto gain roles k0… / kref.
       </p>
+
+      <h3>Monte Carlo campaign</h3>
+      <NumberField
+        label={`Campaign size (1…${MC_CAMPAIGN_MAX})`}
+        value={campaignSize}
+        step={100}
+        onCommit={(value) => setConfig({ mcCampaignSize: Math.min(MC_CAMPAIGN_MAX, Math.max(0, Math.round(value))) })}
+      />
+      <NumberField
+        label={`Overlay lines (≤${MC_OVERLAY_MAX})`}
+        value={overlayCount}
+        step={16}
+        onCommit={(value) => setConfig({ mcOverlayCount: Math.min(MC_OVERLAY_MAX, Math.max(0, Math.round(value))) })}
+      />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={showAllLines}
+          onChange={(event) => setConfig({ mcShowAllLines: event.target.checked })}
+        />
+        <span>
+          WebGL all Bode magnitude lines
+          <em>Draw every campaign run (up to 10k) via WebGL — bands still preferred for reading.</em>
+        </span>
+      </label>
+      <NumberField
+        label="Selected run (0 = nominal)"
+        value={mcRun}
+        step={1}
+        onCommit={(value) => selectMcRun(Math.max(0, Math.round(value)))}
+      />
+      <div className="design-actions">
+        <button type="button" className="ghost" onClick={() => selectMcRun(0)}>
+          Nominal
+        </button>
+        <button type="button" className="ghost" onClick={() => selectMcRun(mcRun + 1)} disabled={uncertainCount <= 0}>
+          Next run
+        </button>
+        <button type="button" className="ghost" onClick={() => runSelectedMc()}>
+          Run sim
+        </button>
+      </div>
+      {progress ? (
+        <div className="mc-progress" role="status" aria-live="polite">
+          <div className="mc-progress-meta">
+            <span>{progress.label}</span>
+            <span>
+              {progress.done.toLocaleString()}/{progress.total.toLocaleString()}
+              {progress.phase === 'sample' && progress.etaMs != null ? ` · ETA ${formatEta(progress.etaMs)}` : ''}
+              {progress.rate != null && progress.phase === 'sample' ? ` · ${progress.rate.toFixed(0)}/s` : ''}
+            </span>
+          </div>
+          <div className="mc-progress-track" aria-hidden>
+            <div
+              className={`mc-progress-fill${progress.phase !== 'sample' ? ' pulse' : ''}`}
+              style={{ width: `${Math.max(2, Math.min(100, (100 * progress.done) / Math.max(1, progress.total)))}%` }}
+            />
+          </div>
+          <p className="hint">
+            {progress.phase === 'sample'
+              ? 'Workers linearize each draw and compute closed-loop poles.'
+              : progress.phase === 'bode'
+                ? 'Batched frequency response (WebGPU when available).'
+                : 'Building percentile bands and overlay pack.'}
+          </p>
+        </div>
+      ) : null}
+      {campaign ? (
+        <ul className="gain-list report-summary">
+          <li>
+            <span>Stable</span>
+            <span>
+              {(100 * campaign.stableFraction).toFixed(1)}% ({campaign.stableCount}/{campaign.ok})
+            </span>
+          </li>
+          <li>
+            <span>α_cl median / p95</span>
+            <span>
+              {campaign.alphaP50 == null ? '—' : campaign.alphaP50.toFixed(3)} /{' '}
+              {campaign.alphaP95 == null ? '—' : campaign.alphaP95.toFixed(3)}
+            </span>
+          </li>
+          <li>
+            <span>Backend</span>
+            <span>
+              {campaign.backend} · {campaign.elapsedMs.toFixed(0)} ms
+            </span>
+          </li>
+        </ul>
+      ) : null}
+      <p className="hint">
+        {uncertainCount > 0
+          ? `Analyze runs a worker campaign (WebGPU Bode when large). Plots use percentile bands + ${overlayCount} grey overlays; black = nominal; amber = run ${selectedRun}.`
+          : 'Enable parameter distributions on the Properties tab to run a Monte Carlo campaign.'}
+      </p>
+
+      <h3>Linearization point</h3>
+      <label className="field">
+        <span>Operating point</span>
+        <select value={design.opMode} onChange={(event) => setDesignOpMode(event.target.value as LinearizationPoint)}>
+          {OP_MODES.map((mode) => (
+            <option key={mode.id} value={mode.id}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+        <em>Where A,B are taken for LQR and stability analysis.</em>
+      </label>
+      <label className="field">
+        <span>x* (state)</span>
+        <input
+          value={design.xOp}
+          placeholder="0 0 0 …"
+          disabled={design.opMode !== 'custom'}
+          onChange={(event) => setDesignOp({ xOp: event.target.value })}
+        />
+      </label>
+      <label className="field">
+        <span>u* (input)</span>
+        <input value={design.uOp} placeholder="0" onChange={(event) => setDesignOp({ uOp: event.target.value })} />
+      </label>
+      <div className="design-actions">
+        <button type="button" className="ghost" onClick={() => captureLinearizationPoint('x0')}>
+          Capture x₀
+        </button>
+        <button type="button" className="ghost" onClick={() => captureLinearizationPoint('live')}>
+          Capture live
+        </button>
+      </div>
+
+      <h3>Stability analysis</h3>
+      <div className="analysis-options">
+        {ALL_ANALYSIS_OPTIONS.map((option) => (
+          <label key={option.id} className="check">
+            <input
+              type="checkbox"
+              checked={show(option.id)}
+              onChange={(event) => setDesignAnalysis(option.id, event.target.checked)}
+            />
+            <span>
+              {option.label}
+              <em>{option.help}</em>
+            </span>
+          </label>
+        ))}
+      </div>
+
       <h3>State weight Q</h3>
       {Q_LABELS.map((label, index) => (
         <NumberField
@@ -272,26 +683,120 @@ function DesignPane() {
       ))}
       <h3>Control weight R</h3>
       <NumberField label="R (control)" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
-      <button className="primary wide" onClick={() => computeLqr()}>
-        Compute LQR and apply
-      </button>
+
+      <div className="design-actions stacked">
+        <button className="ghost wide" onClick={() => analyzeController()}>
+          Analyze stability
+        </button>
+        <button className="primary wide" onClick={() => computeLqr()}>
+          Compute LQR and apply
+        </button>
+      </div>
+
       {view ? (
         <div className="poles">
           <p>{view.summary}</p>
-          <h3>Open-loop poles</h3>
-          <ul>
-            {view.open.map((pole) => (
-              <li key={`o-${pole}`} className={pole.trim().startsWith('-') || pole.trim().startsWith('−') ? '' : 'unstable'}>
-                {pole}
-              </li>
-            ))}
-          </ul>
-          <h3>Closed-loop poles</h3>
-          <ul>
-            {view.closed.map((pole) => (
-              <li key={`c-${pole}`}>{pole}</li>
-            ))}
-          </ul>
+          {view.opLabel ? <p className="hint">Breakpoint: {view.opLabel}</p> : null}
+
+          {report ? (
+            <ul className="gain-list report-summary">
+              {report.summary.map((line) => (
+                <li key={line}>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {report ? (
+            <StabilityPlotGrid
+              report={report}
+              nominal={nominalReport}
+              ensemble={ensemble}
+              selectedRun={selectedRun}
+              campaign={campaign}
+              showAllLines={showAllLines}
+              show={show}
+            />
+          ) : null}
+
+          {show('poles') ? (
+            <>
+              <h3>Open-loop poles</h3>
+              <ul>
+                {view.open.map((pole) => (
+                  <li key={`o-${pole}`} className={pole.trim().startsWith('-') || pole.trim().startsWith('−') ? '' : 'unstable'}>
+                    {pole}
+                  </li>
+                ))}
+              </ul>
+              <h3>Closed-loop poles</h3>
+              <ul>
+                {view.closed.map((pole) => (
+                  <li key={`c-${pole}`} className={pole.trim().startsWith('-') || pole.trim().startsWith('−') ? '' : 'unstable'}>
+                    {pole}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+
+          {show('damping') && report?.modes.length ? (
+            <>
+              <h3>Closed-loop modes</h3>
+              <ul className="gain-list">
+                {report.modes.map((mode) => (
+                  <li key={mode.label}>
+                    <span>{mode.label}</span>
+                    <span>
+                      ζ {mode.zeta.toFixed(2)} · ωₙ {mode.wn.toFixed(2)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+
+          {show('margins') && report?.margins ? (
+            <>
+              <h3>Loop margins</h3>
+              <ul className="gain-list">
+                <li>
+                  <span>Gain margin</span>
+                  <span>{report.margins.gainMarginDb == null ? '—' : `${report.margins.gainMarginDb.toFixed(1)} dB`}</span>
+                </li>
+                <li>
+                  <span>Phase margin</span>
+                  <span>{report.margins.phaseMarginDeg == null ? '—' : `${report.margins.phaseMarginDeg.toFixed(1)}°`}</span>
+                </li>
+                <li>
+                  <span>ω_gc</span>
+                  <span>{report.margins.gainCrossoverRad == null ? '—' : `${report.margins.gainCrossoverRad.toFixed(2)} rad/s`}</span>
+                </li>
+                <li>
+                  <span>ω_pc</span>
+                  <span>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)} rad/s`}</span>
+                </li>
+              </ul>
+              <p className="hint">{report.margins.note}</p>
+            </>
+          ) : null}
+
+          {show('ctrb') && report ? (
+            <>
+              <h3>Controllability</h3>
+              <ul className="gain-list">
+                <li>
+                  <span>Rank</span>
+                  <span>
+                    {report.controllabilityRank} / {report.n}
+                    {report.controllable ? '' : ' (deficient)'}
+                  </span>
+                </li>
+              </ul>
+            </>
+          ) : null}
+
           <h3>Block gains</h3>
           <ul className="gain-list">
             {view.gains.map((gain) => (
@@ -303,7 +808,7 @@ function DesignPane() {
           </ul>
         </div>
       ) : (
-        <p className="hint">Run is not required. Edit plant parameters or Q/R, then compute again.</p>
+        <p className="hint">Select a plant, set the breakpoint, then Analyze or Compute LQR.</p>
       )}
     </div>
   );
