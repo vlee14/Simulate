@@ -116,6 +116,15 @@ export interface SimConfig {
   mcRelError?: number;
   /** Tail quantile for percentile sample-size sizing (default 0.95). */
   mcTailQuantile?: number;
+  /**
+   * Monte Carlo stability campaign size (runs 1…N). Cap 10 000.
+   * Analyze uses workers (+ WebGPU Bode when helpful); plots show bands + overlay subset.
+   */
+  mcCampaignSize?: number;
+  /** How many grey overlay traces to draw from the campaign (default ~96). */
+  mcOverlayCount?: number;
+  /** When true, WebGL packs all campaign Bode magnitude lines (up to 10k). */
+  mcShowAllLines?: boolean;
 }
 
 /** Where to linearize the plant for LQR / stability analysis. */

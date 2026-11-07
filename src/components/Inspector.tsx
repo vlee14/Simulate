@@ -6,6 +6,8 @@ import { countUncertainParams, describeDraw, DIST_OPTIONS, drawNumeric, recommen
 import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData, toGraph } from '../model/elements';
+import { formatEta } from '../engine/mcCampaignRunner';
+import { MC_CAMPAIGN_MAX, MC_OVERLAY_MAX } from '../engine/mcStats';
 import { analyzeController, captureLinearizationPoint, computeLqr, resetSim, runSelectedMc, selectMcRun } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
@@ -435,8 +437,10 @@ function NumberField({
 function DesignPane() {
   const design = useStore((state) => state.design);
   const view = useStore((state) => state.designView);
-  const mcRun = useStore((state) => state.config.mcRun ?? 0);
+  const config = useStore((state) => state.config);
+  const mcRun = config.mcRun ?? 0;
   const elements = useStore((state) => state.elements);
+  const setConfig = useStore((state) => state.setConfig);
   const setDesignWeight = useStore((state) => state.setDesignWeight);
   const setDesignR = useStore((state) => state.setDesignR);
   const setDesignOpMode = useStore((state) => state.setDesignOpMode);
@@ -445,9 +449,14 @@ function DesignPane() {
   const report = view?.report;
   const nominalReport = view?.nominalReport ?? report ?? null;
   const ensemble = view?.mcEnsemble ?? [];
+  const campaign = view?.mcCampaign ?? null;
+  const progress = view?.mcCampaignProgress ?? null;
   const selectedRun = view?.selectedRun ?? mcRun;
   const uncertainCount = useMemo(() => countUncertainParams(toGraph(elements).nodes), [elements]);
   const show = (option: AnalysisOption) => (design.analysis ?? []).includes(option);
+  const campaignSize = config.mcCampaignSize ?? 1000;
+  const overlayCount = config.mcOverlayCount ?? 96;
+  const showAllLines = !!config.mcShowAllLines;
 
   return (
     <div className="pane">
@@ -456,7 +465,30 @@ function DesignPane() {
         Pick a linearization / breakpoint, choose stability reports, then analyze the current controller or compute LQR onto gain roles k0… / kref.
       </p>
 
-      <h3>Monte Carlo run</h3>
+      <h3>Monte Carlo campaign</h3>
+      <NumberField
+        label={`Campaign size (1…${MC_CAMPAIGN_MAX})`}
+        value={campaignSize}
+        step={100}
+        onCommit={(value) => setConfig({ mcCampaignSize: Math.min(MC_CAMPAIGN_MAX, Math.max(0, Math.round(value))) })}
+      />
+      <NumberField
+        label={`Overlay lines (≤${MC_OVERLAY_MAX})`}
+        value={overlayCount}
+        step={16}
+        onCommit={(value) => setConfig({ mcOverlayCount: Math.min(MC_OVERLAY_MAX, Math.max(0, Math.round(value))) })}
+      />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={showAllLines}
+          onChange={(event) => setConfig({ mcShowAllLines: event.target.checked })}
+        />
+        <span>
+          WebGL all Bode magnitude lines
+          <em>Draw every campaign run (up to 10k) via WebGL — bands still preferred for reading.</em>
+        </span>
+      </label>
       <NumberField
         label="Selected run (0 = nominal)"
         value={mcRun}
@@ -474,10 +506,58 @@ function DesignPane() {
           Run sim
         </button>
       </div>
+      {progress ? (
+        <div className="mc-progress" role="status" aria-live="polite">
+          <div className="mc-progress-meta">
+            <span>{progress.label}</span>
+            <span>
+              {progress.done.toLocaleString()}/{progress.total.toLocaleString()}
+              {progress.phase === 'sample' && progress.etaMs != null ? ` · ETA ${formatEta(progress.etaMs)}` : ''}
+              {progress.rate != null && progress.phase === 'sample' ? ` · ${progress.rate.toFixed(0)}/s` : ''}
+            </span>
+          </div>
+          <div className="mc-progress-track" aria-hidden>
+            <div
+              className={`mc-progress-fill${progress.phase !== 'sample' ? ' pulse' : ''}`}
+              style={{ width: `${Math.max(2, Math.min(100, (100 * progress.done) / Math.max(1, progress.total)))}%` }}
+            />
+          </div>
+          <p className="hint">
+            {progress.phase === 'sample'
+              ? 'Workers linearize each draw and compute closed-loop poles.'
+              : progress.phase === 'bode'
+                ? 'Batched frequency response (WebGPU when available).'
+                : 'Building percentile bands and overlay pack.'}
+          </p>
+        </div>
+      ) : null}
+      {campaign ? (
+        <ul className="gain-list report-summary">
+          <li>
+            <span>Stable</span>
+            <span>
+              {(100 * campaign.stableFraction).toFixed(1)}% ({campaign.stableCount}/{campaign.ok})
+            </span>
+          </li>
+          <li>
+            <span>α_cl median / p95</span>
+            <span>
+              {campaign.alphaP50 == null ? '—' : campaign.alphaP50.toFixed(3)} /{' '}
+              {campaign.alphaP95 == null ? '—' : campaign.alphaP95.toFixed(3)}
+            </span>
+          </li>
+          <li>
+            <span>Backend</span>
+            <span>
+              {campaign.backend} · {campaign.elapsedMs.toFixed(0)} ms
+            </span>
+          </li>
+        </ul>
+      ) : null}
       <p className="hint">
         {uncertainCount > 0
-          ? `Analyze overlays grey MC traces with black nominal; amber highlights run ${selectedRun}. Run sim uses the selected draw.`
-          : 'Enable parameter distributions on the Properties tab to overlay Monte Carlo traces.'}
+          ? `Analyze runs a worker campaign (WebGPU Bode when large). Plots use percentile bands + ${overlayCount} grey overlays; black = nominal; amber = run ${selectedRun}.`
+          : 'Enable parameter distributions on the Properties tab to run a Monte Carlo campaign.'}
       </p>
 
       <h3>Linearization point</h3>
@@ -574,6 +654,8 @@ function DesignPane() {
               nominal={nominalReport}
               ensemble={ensemble}
               selectedRun={selectedRun}
+              campaign={campaign}
+              showAllLines={showAllLines}
               show={show}
             />
           ) : null}

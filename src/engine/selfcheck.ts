@@ -10,7 +10,11 @@ import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
 import { parseStageConfig, stageTrailTip } from './scene';
 import { analyzeStability, parseVector } from './stability';
+import { frequencyResponseBatchCpu, packPlant } from './freqBatch';
+import { sampleMcRange } from './mcSample';
 import { applyMonteCarlo, countUncertainParams, drawNumeric, mixSeed, mulberry32, recommendMcRuns } from './montecarlo';
+import { aggregateCampaign, clampCampaignSize, percentile, pickOverlayRuns } from './mcStats';
+import { logspace } from './stability';
 import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
@@ -281,6 +285,54 @@ function main(): void {
   );
   close(two.cv, Math.SQRT2 * 0.1, 1e-9, 'RSS CV for two 10% params');
   assert(two.mean > clt.mean, 'more variance ⇒ larger CLT N');
+
+  close(clampCampaignSize(50_000), 10_000, 0, 'campaign cap 10k');
+  close(percentile([1, 2, 3, 4, 5], 0.5), 3, 0, 'median');
+  assert(pickOverlayRuns(1000, 8).length === 8, 'overlay picker length');
+  const overlayHasSelected = pickOverlayRuns(100, 10, 42);
+  assert(!!overlayHasSelected.includes(42), 'overlay keeps selected run');
+
+  // Tiny second-order plant campaign samples
+  const plantNodes = [
+    {
+      id: 'plant',
+      blockType: 'secondorder',
+      parameters: { wn: 2, zeta: 0.3, y0: 0, dy0: 0 } as Record<string, number>,
+      uncertainty: { wn: { kind: 'percent' as const, seed: 9, spread: 5 } },
+    },
+  ];
+  const samples = sampleMcRange({
+    plantId: 'plant',
+    blockType: 'secondorder',
+    nodes: plantNodes as any,
+    xOp: [0, 0],
+    uOp: [0],
+    K: [1, 0.5],
+    runStart: 1,
+    runEnd: 12,
+    computeFreq: true,
+    nOmega: 32,
+  });
+  assert(samples.length >= 8, `expected MC samples, got ${samples.length}`);
+  const ws = logspace(1e-3, 1e3, 32);
+  const stats = aggregateCampaign(samples, ws, { overlayCount: 6, backend: 'cpu', elapsedMs: 1 });
+  assert(stats.ok === samples.length, 'aggregate ok count');
+  assert(!!(stats.bodeMag && stats.bodeMag.p50.length === 32), 'bode band width');
+  assert(stats.overlayRuns.length <= 6, 'overlay capped');
+
+  const packed = samples.filter((s) => s.n).map((s) => {
+    // rebuild from poles path — pack via linearize already in sample when keepAB
+    return packPlant(
+      [
+        [0, 1],
+        [-4, -1.2],
+      ],
+      [[0], [1]]
+    );
+  });
+  const batch = frequencyResponseBatchCpu(packed.slice(0, 3), [1, 0.5], ws);
+  assert(batch.length === 3 * 32 * 4, 'CPU Bode batch shape');
+  assert(Number.isFinite(batch[2]), 'CPU Bode mag finite');
 
   console.log('selfcheck ok');
 }
