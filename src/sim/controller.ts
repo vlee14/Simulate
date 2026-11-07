@@ -2,13 +2,16 @@ import { getBlock } from '../engine/blocks';
 import { structureSignature, SimCompileError } from '../engine/compile';
 import { designDynamicsLqr } from '../engine/lqr';
 import { linearizeBlock } from '../engine/linearize';
-import { applyMonteCarlo } from '../engine/montecarlo';
+import { applyMonteCarlo, countUncertainParams, recommendMcRuns } from '../engine/montecarlo';
 import { SimulationEngine } from '../engine/runtime';
-import { analyzeStability, formatVector, parseVector } from '../engine/stability';
+import { analyzeStability, formatVector, parseVector, StabilityReport } from '../engine/stability';
 import { telemetry } from '../engine/telemetry';
 import { DesignConfig, GraphNode } from '../engine/types';
 import { toGraph } from '../model/elements';
 import { describePoles, useStore } from '../store';
+
+/** Cap MC overlay traces so Design-pane charts stay interactive. */
+const MC_PLOT_OVERLAY_CAP = 48;
 
 let engine: SimulationEngine | null = null;
 let raf = 0;
@@ -327,6 +330,61 @@ function readControllerGains(n: number): number[] {
   return K;
 }
 
+function plantNodeForRun(plantId: string, run: number): GraphNode | null {
+  const nodes = applyMonteCarlo(graphNow().nodes, run);
+  return nodes.find((node) => node.id === plantId) ?? null;
+}
+
+function linearizePlantRun(
+  plant: GraphNode,
+  run: number,
+  design: DesignConfig
+): { A: number[][]; B: number[][]; opLabel: string } {
+  const drawn = plantNodeForRun(plant.id, run) ?? plant;
+  const op = resolveOperatingPoint(drawn, design);
+  const { A, B } = linearizeBlock(drawn.blockType, drawn.parameters, op.x, op.u);
+  const B1 = B.map((row) => [row[0] ?? 0]);
+  return { A, B: B1, opLabel: op.label };
+}
+
+function buildMcEnsemble(
+  plant: GraphNode,
+  K: number[],
+  design: DesignConfig,
+  selectedRun: number
+): { run: number; report: StabilityReport }[] {
+  const graph = graphNow();
+  const uncertain = countUncertainParams(graph.nodes);
+  if (uncertain <= 0) return [];
+  const config = useStore.getState().config;
+  const advice = recommendMcRuns(graph.nodes, {
+    confidence: config.mcConfidence ?? 0.95,
+    relError: config.mcRelError ?? 0.05,
+    tailQuantile: config.mcTailQuantile ?? 0.95,
+  });
+  // Prefer explore sizing for overlays; still allow up to the mean tier within the plot cap.
+  const target = Math.min(MC_PLOT_OVERLAY_CAP, Math.max(advice.explore, Math.min(advice.mean, MC_PLOT_OVERLAY_CAP)));
+  const opts = design.analysis?.length ? design.analysis : undefined;
+  const ensemble: { run: number; report: StabilityReport }[] = [];
+  for (let run = 1; run <= target; run++) {
+    try {
+      const { A, B } = linearizePlantRun(plant, run, design);
+      ensemble.push({ run, report: analyzeStability(A, B, K, opts) });
+    } catch {
+      // Skip draws that fail to linearize; keep remaining ensemble.
+    }
+  }
+  if (selectedRun > 0 && !ensemble.some((t) => t.run === selectedRun)) {
+    try {
+      const { A, B } = linearizePlantRun(plant, selectedRun, design);
+      ensemble.push({ run: selectedRun, report: analyzeStability(A, B, K, opts) });
+    } catch {
+      /* ignore */
+    }
+  }
+  return ensemble;
+}
+
 function publishDesignView(args: {
   summary: string;
   plant: GraphNode;
@@ -336,18 +394,86 @@ function publishDesignView(args: {
   A: number[][];
   B: number[][];
 }): void {
-  const design = useStore.getState().design;
-  const report = analyzeStability(args.A, args.B, args.K, design.analysis?.length ? design.analysis : undefined);
+  const state = useStore.getState();
+  const design = state.design;
+  const opts = design.analysis?.length ? design.analysis : undefined;
+  const nominalReport = analyzeStability(args.A, args.B, args.K, opts);
+  const selectedRun = Math.max(0, Math.round(state.config.mcRun ?? 0));
+  const mcEnsemble = buildMcEnsemble(args.plant, args.K, design, selectedRun);
+
+  let report = nominalReport;
+  let open = describePoles(nominalReport.polesOpen);
+  let closed = describePoles(nominalReport.polesClosed);
+  if (selectedRun > 0) {
+    const hit = mcEnsemble.find((t) => t.run === selectedRun);
+    if (hit) {
+      report = hit.report;
+      open = describePoles(hit.report.polesOpen);
+      closed = describePoles(hit.report.polesClosed);
+    } else {
+      try {
+        const { A, B } = linearizePlantRun(args.plant, selectedRun, design);
+        report = analyzeStability(A, B, args.K, opts);
+        open = describePoles(report.polesOpen);
+        closed = describePoles(report.polesClosed);
+      } catch {
+        report = nominalReport;
+      }
+    }
+  }
+
+  const runNote =
+    selectedRun > 0
+      ? ` Selected MC run ${selectedRun}.`
+      : mcEnsemble.length
+        ? ` Overlay: ${mcEnsemble.length} MC run${mcEnsemble.length === 1 ? '' : 's'} (grey) + nominal (black).`
+        : '';
+
   useStore.getState().setDesignView({
-    summary: args.summary,
-    open: describePoles(report.polesOpen),
-    closed: describePoles(report.polesClosed),
+    summary: args.summary + runNote,
+    open,
+    closed,
     gains: args.appliedGains.length
       ? args.appliedGains
       : args.K.map((value, index) => ({ id: `k${index}`, value: -value })),
     opLabel: args.opLabel,
     report,
+    nominalReport,
+    mcEnsemble,
+    selectedRun,
   });
+}
+
+/** Set the Monte Carlo run used for analysis detail / simulation, then refresh stability if plots exist. */
+export function selectMcRun(run: number): void {
+  const next = Math.max(0, Math.round(run));
+  useStore.getState().setConfig({ mcRun: next });
+  const view = useStore.getState().designView;
+  if (!view?.nominalReport) return;
+
+  const hit = next === 0 ? view.nominalReport : view.mcEnsemble?.find((t) => t.run === next)?.report;
+  if (hit) {
+    useStore.getState().setDesignView({
+      ...view,
+      selectedRun: next,
+      report: hit,
+      open: describePoles(hit.polesOpen),
+      closed: describePoles(hit.polesClosed),
+      summary:
+        next > 0
+          ? view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/\s*$/, '') + ` Selected MC run ${next}.`
+          : view.summary.replace(/ Selected MC run \d+\.?/, '').trim(),
+    });
+    return;
+  }
+  // Selected run is outside the current overlay set — rebuild ensemble + detail.
+  analyzeController();
+}
+
+/** Reset and simulate the currently selected Monte Carlo run. */
+export function runSelectedMc(): void {
+  resetSim();
+  play();
 }
 
 /** Capture plant x₀ or live state into the custom linearization breakpoint fields. */

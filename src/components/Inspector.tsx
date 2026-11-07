@@ -2,11 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
 import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
-import { describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
+import { countUncertainParams, describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
 import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData, toGraph } from '../model/elements';
-import { analyzeController, captureLinearizationPoint, computeLqr, resetSim } from '../sim/controller';
+import { analyzeController, captureLinearizationPoint, computeLqr, resetSim, runSelectedMc, selectMcRun } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
 import { StabilityPlotGrid } from './StabilityPlots';
@@ -435,12 +435,18 @@ function NumberField({
 function DesignPane() {
   const design = useStore((state) => state.design);
   const view = useStore((state) => state.designView);
+  const mcRun = useStore((state) => state.config.mcRun ?? 0);
+  const elements = useStore((state) => state.elements);
   const setDesignWeight = useStore((state) => state.setDesignWeight);
   const setDesignR = useStore((state) => state.setDesignR);
   const setDesignOpMode = useStore((state) => state.setDesignOpMode);
   const setDesignOp = useStore((state) => state.setDesignOp);
   const setDesignAnalysis = useStore((state) => state.setDesignAnalysis);
   const report = view?.report;
+  const nominalReport = view?.nominalReport ?? report ?? null;
+  const ensemble = view?.mcEnsemble ?? [];
+  const selectedRun = view?.selectedRun ?? mcRun;
+  const uncertainCount = useMemo(() => countUncertainParams(toGraph(elements).nodes), [elements]);
   const show = (option: AnalysisOption) => (design.analysis ?? []).includes(option);
 
   return (
@@ -448,6 +454,30 @@ function DesignPane() {
       <h2>Control design</h2>
       <p className="lede">
         Pick a linearization / breakpoint, choose stability reports, then analyze the current controller or compute LQR onto gain roles k0… / kref.
+      </p>
+
+      <h3>Monte Carlo run</h3>
+      <NumberField
+        label="Selected run (0 = nominal)"
+        value={mcRun}
+        step={1}
+        onCommit={(value) => selectMcRun(Math.max(0, Math.round(value)))}
+      />
+      <div className="design-actions">
+        <button type="button" className="ghost" onClick={() => selectMcRun(0)}>
+          Nominal
+        </button>
+        <button type="button" className="ghost" onClick={() => selectMcRun(mcRun + 1)} disabled={uncertainCount <= 0}>
+          Next run
+        </button>
+        <button type="button" className="ghost" onClick={() => runSelectedMc()}>
+          Run sim
+        </button>
+      </div>
+      <p className="hint">
+        {uncertainCount > 0
+          ? `Analyze overlays grey MC traces with black nominal; amber highlights run ${selectedRun}. Run sim uses the selected draw.`
+          : 'Enable parameter distributions on the Properties tab to overlay Monte Carlo traces.'}
       </p>
 
       <h3>Linearization point</h3>
@@ -538,7 +568,15 @@ function DesignPane() {
             </ul>
           ) : null}
 
-          {report ? <StabilityPlotGrid report={report} show={show} /> : null}
+          {report ? (
+            <StabilityPlotGrid
+              report={report}
+              nominal={nominalReport}
+              ensemble={ensemble}
+              selectedRun={selectedRun}
+              show={show}
+            />
+          ) : null}
 
           {show('poles') ? (
             <>

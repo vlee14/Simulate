@@ -16,7 +16,14 @@ export interface DesignView {
   closed: string[];
   gains: { id: string; value: number }[];
   opLabel?: string;
+  /** Report for the currently selected MC run (0 = nominal). */
   report?: StabilityReport | null;
+  /** Always the run-0 (nominal plant) stability report for plot overlays. */
+  nominalReport?: StabilityReport | null;
+  /** Monte Carlo ensemble traces (runs ≥ 1) drawn in grey behind nominal. */
+  mcEnsemble?: { run: number; report: StabilityReport }[];
+  /** Which MC run the detail report / amber highlight refers to. */
+  selectedRun?: number;
 }
 
 interface AppState {
