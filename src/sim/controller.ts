@@ -449,7 +449,18 @@ function publishDesignView(args: {
     mcCampaign: null,
     mcSamples: null,
     mcCampaignWs: null,
-    mcCampaignProgress: uncertain > 0 && campaignN > 0 ? { done: 0, total: campaignN } : null,
+    mcCampaignProgress:
+      uncertain > 0 && campaignN > 0
+        ? {
+            done: 0,
+            total: campaignN,
+            phase: 'sample',
+            startedAt: performance.now(),
+            etaMs: null,
+            rate: null,
+            label: 'Starting workers…',
+          }
+        : null,
   });
 
   if (uncertain <= 0 || campaignN <= 0) return;
@@ -472,12 +483,19 @@ function publishDesignView(args: {
     selectedRun,
     includeAllLines,
     signal: campaignAbort.signal,
-    onProgress: (done, total) => {
-      if (token !== campaignToken) return;
-      const view = useStore.getState().designView;
-      if (!view) return;
-      useStore.getState().setDesignView({ ...view, mcCampaignProgress: { done, total } });
-    },
+    onProgress: (() => {
+      let lastUi = 0;
+      return (progress) => {
+        if (token !== campaignToken) return;
+        const now = performance.now();
+        const terminal = progress.done >= progress.total || progress.phase !== 'sample';
+        if (!terminal && now - lastUi < 100) return;
+        lastUi = now;
+        const view = useStore.getState().designView;
+        if (!view) return;
+        useStore.getState().setDesignView({ ...view, mcCampaignProgress: progress });
+      };
+    })(),
   })
     .then((result) => {
       if (token !== campaignToken) return;

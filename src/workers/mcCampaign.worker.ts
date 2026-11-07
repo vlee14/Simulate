@@ -2,11 +2,12 @@ import { McSampleJob, sampleMcRange } from '../engine/mcSample';
 import { McRunSample } from '../engine/mcStats';
 
 export type WorkerRequest =
-  | { type: 'sample'; id: number; job: McSampleJob }
+  | { type: 'sample'; id: number; job: Omit<McSampleJob, 'onProgress'> }
   | { type: 'ping'; id: number };
 
 export type WorkerResponse =
   | { type: 'sample'; id: number; samples: McRunSample[] }
+  | { type: 'progress'; id: number; completedInRange: number; rangeTotal: number }
   | { type: 'error'; id: number; message: string }
   | { type: 'pong'; id: number };
 
@@ -23,7 +24,12 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
       return;
     }
     if (msg.type === 'sample') {
-      const samples = sampleMcRange(msg.job);
+      const samples = sampleMcRange({
+        ...msg.job,
+        onProgress: (completedInRange, rangeTotal) => {
+          ctx.postMessage({ type: 'progress', id: msg.id, completedInRange, rangeTotal });
+        },
+      });
       const transfer: Transferable[] = [];
       for (const s of samples) {
         if (s.freqFlat instanceof Float64Array) transfer.push(s.freqFlat.buffer);

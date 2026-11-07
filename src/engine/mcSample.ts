@@ -21,6 +21,10 @@ export interface McSampleJob {
   /** If false, skip per-run frequency response (GPU/CPU batch later). */
   computeFreq?: boolean;
   nOmega?: number;
+  /** Fired with how many runs finished in this range (1-based count). */
+  onProgress?: (completedInRange: number, rangeTotal: number) => void;
+  /** Progress cadence (default 32). */
+  progressEvery?: number;
 }
 
 function marginsFromFlat(freqFlat: Float64Array | number[], ws: number[], K: number[]) {
@@ -77,11 +81,18 @@ export function sampleMcRange(job: McSampleJob): McRunSample[] {
   const ws = logspace(1e-3, 1e3, job.nOmega ?? 96);
   const computeFreq = job.computeFreq !== false;
   const out: McRunSample[] = [];
+  const rangeTotal = Math.max(0, job.runEnd - job.runStart + 1);
+  const every = Math.max(1, job.progressEvery ?? 32);
+  let completed = 0;
   for (let run = job.runStart; run <= job.runEnd; run++) {
     try {
       const nodes = applyMonteCarlo(job.nodes, run);
       const plant = nodes.find((n) => n.id === job.plantId);
-      if (!plant) continue;
+      if (!plant) {
+        completed++;
+        if (job.onProgress && (completed % every === 0 || completed === rangeTotal)) job.onProgress(completed, rangeTotal);
+        continue;
+      }
       const { A, B } = linearizeBlock(plant.blockType, plant.parameters as Record<string, Param>, job.xOp, job.uOp);
       const B1 = B.map((row) => [row[0] ?? 0]);
       const Acl = closedLoopMatrix(A, B1, job.K);
@@ -106,6 +117,8 @@ export function sampleMcRange(job: McSampleJob): McRunSample[] {
     } catch {
       // skip failed linearizations
     }
+    completed++;
+    if (job.onProgress && (completed % every === 0 || completed === rangeTotal)) job.onProgress(completed, rangeTotal);
   }
   return out;
 }

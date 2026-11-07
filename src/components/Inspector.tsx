@@ -6,6 +6,7 @@ import { countUncertainParams, describeDraw, DIST_OPTIONS, drawNumeric, recommen
 import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData, toGraph } from '../model/elements';
+import { formatEta } from '../engine/mcCampaignRunner';
 import { MC_CAMPAIGN_MAX, MC_OVERLAY_MAX } from '../engine/mcStats';
 import { analyzeController, captureLinearizationPoint, computeLqr, resetSim, runSelectedMc, selectMcRun } from '../sim/controller';
 import { useStore } from '../store';
@@ -506,9 +507,29 @@ function DesignPane() {
         </button>
       </div>
       {progress ? (
-        <p className="hint">
-          Campaign {progress.done}/{progress.total}…
-        </p>
+        <div className="mc-progress" role="status" aria-live="polite">
+          <div className="mc-progress-meta">
+            <span>{progress.label}</span>
+            <span>
+              {progress.done.toLocaleString()}/{progress.total.toLocaleString()}
+              {progress.phase === 'sample' && progress.etaMs != null ? ` · ETA ${formatEta(progress.etaMs)}` : ''}
+              {progress.rate != null && progress.phase === 'sample' ? ` · ${progress.rate.toFixed(0)}/s` : ''}
+            </span>
+          </div>
+          <div className="mc-progress-track" aria-hidden>
+            <div
+              className={`mc-progress-fill${progress.phase !== 'sample' ? ' pulse' : ''}`}
+              style={{ width: `${Math.max(2, Math.min(100, (100 * progress.done) / Math.max(1, progress.total)))}%` }}
+            />
+          </div>
+          <p className="hint">
+            {progress.phase === 'sample'
+              ? 'Workers linearize each draw and compute closed-loop poles.'
+              : progress.phase === 'bode'
+                ? 'Batched frequency response (WebGPU when available).'
+                : 'Building percentile bands and overlay pack.'}
+          </p>
+        </div>
       ) : null}
       {campaign ? (
         <ul className="gain-list report-summary">

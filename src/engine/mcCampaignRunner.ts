@@ -13,6 +13,21 @@ import { logspace } from './stability';
 import { GraphNode } from './types';
 import type { WorkerRequest, WorkerResponse } from '../workers/mcCampaign.worker';
 
+export type CampaignPhase = 'sample' | 'bode' | 'aggregate';
+
+export interface CampaignProgress {
+  done: number;
+  total: number;
+  phase: CampaignPhase;
+  /** Wall-clock start of the campaign. */
+  startedAt: number;
+  /** Estimated remaining ms from recent rate; null until enough samples. */
+  etaMs: number | null;
+  /** Completed runs per second (sample phase) or null. */
+  rate: number | null;
+  label: string;
+}
+
 export interface CampaignRequest {
   plantId: string;
   blockType: string;
@@ -27,7 +42,7 @@ export interface CampaignRequest {
   /** Draw every campaign line in the WebGL pack (can be 10k). */
   includeAllLines?: boolean;
   nOmega?: number;
-  onProgress?: (done: number, total: number) => void;
+  onProgress?: (progress: CampaignProgress) => void;
   signal?: AbortSignal;
 }
 
@@ -53,15 +68,59 @@ function chunkRanges(nRuns: number, chunks: number): { start: number; end: numbe
   return out;
 }
 
-async function runOnWorkers(jobBase: Omit<McSampleJob, 'runStart' | 'runEnd'>, nRuns: number, onProgress?: CampaignRequest['onProgress'], signal?: AbortSignal): Promise<McRunSample[]> {
+function phaseLabel(phase: CampaignPhase, backendHint?: string): string {
+  if (phase === 'sample') return 'Sampling plants (workers)';
+  if (phase === 'bode') return backendHint === 'webgpu' ? 'Batch Bode (WebGPU)' : 'Batch Bode (CPU)';
+  return 'Aggregating bands';
+}
+
+function makeProgress(
+  done: number,
+  total: number,
+  phase: CampaignPhase,
+  startedAt: number,
+  label?: string
+): CampaignProgress {
+  const elapsed = Math.max(1, performance.now() - startedAt);
+  const rate = done > 0 ? (done / elapsed) * 1000 : null;
+  const remaining = Math.max(0, total - done);
+  const etaMs = rate && rate > 0 && done >= Math.min(64, Math.max(8, total * 0.02)) ? (remaining / rate) * 1000 : null;
+  return {
+    done: Math.min(done, total),
+    total,
+    phase,
+    startedAt,
+    etaMs,
+    rate,
+    label: label ?? phaseLabel(phase),
+  };
+}
+
+async function runOnWorkers(
+  jobBase: Omit<McSampleJob, 'runStart' | 'runEnd' | 'onProgress'>,
+  nRuns: number,
+  startedAt: number,
+  onProgress?: CampaignRequest['onProgress'],
+  signal?: AbortSignal
+): Promise<McRunSample[]> {
   if (typeof Worker === 'undefined') {
-    return sampleMcRange({ ...jobBase, runStart: 1, runEnd: nRuns });
+    return sampleMcRange({
+      ...jobBase,
+      runStart: 1,
+      runEnd: nRuns,
+      onProgress: (completed) => onProgress?.(makeProgress(completed, nRuns, 'sample', startedAt)),
+    });
   }
 
   const ranges = chunkRanges(nRuns, workerCount());
   const workers = ranges.map(() => new Worker(new URL('../workers/mcCampaign.worker.ts', import.meta.url), { type: 'module' }));
-  let done = 0;
+  const completedByWorker = new Array(ranges.length).fill(0);
   const total = nRuns;
+
+  const emit = () => {
+    const done = completedByWorker.reduce((a, b) => a + b, 0);
+    onProgress?.(makeProgress(done, total, 'sample', startedAt));
+  };
 
   try {
     const parts = await Promise.all(
@@ -81,9 +140,14 @@ async function runOnWorkers(jobBase: Omit<McSampleJob, 'runStart' | 'runEnd'>, n
             signal?.addEventListener('abort', onAbort, { once: true });
             worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
               const msg = event.data;
+              if (msg.type === 'progress' && msg.id === id) {
+                completedByWorker[index] = msg.completedInRange;
+                emit();
+                return;
+              }
               if (msg.type === 'sample' && msg.id === id) {
-                done += msg.samples.length;
-                onProgress?.(Math.min(done, total), total);
+                completedByWorker[index] = range.end - range.start + 1;
+                emit();
                 signal?.removeEventListener('abort', onAbort);
                 resolve(msg.samples);
               } else if (msg.type === 'error' && msg.id === id) {
@@ -114,11 +178,17 @@ async function runOnWorkers(jobBase: Omit<McSampleJob, 'runStart' | 'runEnd'>, n
  * Run a Monte Carlo stability campaign.
  * Workers linearize + eigens (+ optional CPU Bode). For large N and n≤8, Bode is
  * recomputed in batch on WebGPU when available.
+ *
+ * Progress model for 10k:
+ * 1. sample — parallel workers report completed runs (~every 32)
+ * 2. bode — one shot for packed A,B (WebGPU or CPU); progress jumps to ~complete
+ * 3. aggregate — percentile bands / overlay pack
  */
 export async function runMcCampaign(req: CampaignRequest): Promise<CampaignResult> {
   const nRuns = clampCampaignSize(Math.min(req.nRuns, MC_CAMPAIGN_MAX));
   const ws = logspace(1e-3, 1e3, req.nOmega ?? 96);
   const overlayCount = req.overlayCount ?? MC_OVERLAY_DEFAULT;
+  const startedAt = performance.now();
   if (nRuns <= 0) {
     return {
       samples: [],
@@ -127,21 +197,11 @@ export async function runMcCampaign(req: CampaignRequest): Promise<CampaignResul
     };
   }
 
-  const t0 = performance.now();
-  const nProbe = (() => {
-    try {
-      const nodes = req.nodes;
-      // cheap: use nominal plant size from first linearizable attempt in sample of run 1
-      return null as number | null;
-    } catch {
-      return null;
-    }
-  })();
-  void nProbe;
+  req.onProgress?.(makeProgress(0, nRuns, 'sample', startedAt));
 
   // Prefer: workers keep A/B and skip per-run Bode when campaign is large → GPU/CPU batch Bode.
   const large = nRuns >= 256;
-  const jobBase: Omit<McSampleJob, 'runStart' | 'runEnd'> = {
+  const jobBase: Omit<McSampleJob, 'runStart' | 'runEnd' | 'onProgress'> = {
     plantId: req.plantId,
     blockType: req.blockType,
     nodes: req.nodes,
@@ -153,7 +213,7 @@ export async function runMcCampaign(req: CampaignRequest): Promise<CampaignResul
     nOmega: ws.length,
   };
 
-  let samples = await runOnWorkers(jobBase, nRuns, req.onProgress, req.signal);
+  let samples = await runOnWorkers(jobBase, nRuns, startedAt, req.onProgress, req.signal);
   let backend: McCampaignStats['backend'] = large ? 'hybrid' : 'cpu';
 
   if (large && samples.length) {
@@ -167,14 +227,27 @@ export async function runMcCampaign(req: CampaignRequest): Promise<CampaignResul
       }
     }
     if (plants.length) {
+      req.onProgress?.(
+        makeProgress(nRuns, nRuns, 'bode', startedAt, phaseLabel('bode', 'webgpu'))
+      );
+      // Mark bode as in-progress with done=nRuns so bar stays full while GPU runs; ETA null
+      req.onProgress?.({
+        done: nRuns,
+        total: nRuns,
+        phase: 'bode',
+        startedAt,
+        etaMs: null,
+        rate: null,
+        label: 'Batch Bode (WebGPU or CPU)…',
+      });
       const batch = await frequencyResponseBatch(plants, req.K, ws);
       backend = batch.backend === 'webgpu' ? 'webgpu' : 'hybrid';
+      req.onProgress?.(makeProgress(nRuns, nRuns, 'bode', startedAt, phaseLabel('bode', batch.backend)));
       const W = ws.length;
       for (let p = 0; p < plants.length; p++) {
         const slice = batch.data.subarray(p * W * 4, (p + 1) * W * 4);
         const sample = samples[indexMap[p]];
         sample.freqFlat = slice.slice();
-        // margins from freq
         const points = [];
         for (let i = 0; i < W; i++) {
           const re = slice[i * 4];
@@ -189,7 +262,6 @@ export async function runMcCampaign(req: CampaignRequest): Promise<CampaignResul
             phaseDeg: slice[i * 4 + 3],
           });
         }
-        // reuse loopMargins via dynamic import avoided — inline simple crossover
         let gm: number | null = null;
         let pm: number | null = null;
         for (let i = 1; i < points.length; i++) {
@@ -208,18 +280,17 @@ export async function runMcCampaign(req: CampaignRequest): Promise<CampaignResul
         }
         sample.gainMarginDb = gm;
         sample.phaseMarginDeg = pm;
-        // free AB to reduce memory after Bode
         delete sample.Aflat;
         delete sample.Bflat;
       }
     } else {
-      // no AB — recompute with CPU freq in workers
-      samples = await runOnWorkers({ ...jobBase, keepAB: false, computeFreq: true }, nRuns, req.onProgress, req.signal);
+      samples = await runOnWorkers({ ...jobBase, keepAB: false, computeFreq: true }, nRuns, startedAt, req.onProgress, req.signal);
       backend = 'cpu';
     }
   }
 
-  const elapsedMs = performance.now() - t0;
+  req.onProgress?.(makeProgress(nRuns, nRuns, 'aggregate', startedAt));
+  const elapsedMs = performance.now() - startedAt;
   const stats = aggregateCampaign(samples, ws, {
     overlayCount,
     selectedRun: req.selectedRun,
@@ -250,4 +321,14 @@ export function sampleToFreqPoints(sample: McRunSample, ws: number[]) {
     });
   }
   return points;
+}
+
+export function formatEta(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '…';
+  if (ms < 1000) return '<1s';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `~${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `~${m}m ${rem}s` : `~${m}m`;
 }
