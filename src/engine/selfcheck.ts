@@ -246,15 +246,41 @@ function main(): void {
   assert(u >= 0 && u < 1, 'mulberry32 in [0,1)');
 
   close(countUncertainParams(mcNodes), 1, 0, 'one uncertain param counted');
-  const noneAdvice = recommendMcRuns(0);
+  const noneAdvice = recommendMcRuns([]);
   assert(noneAdvice.recommended === 0, 'no-params recommendation is 0');
-  const three = recommendMcRuns(3);
-  close(three.explore, 30, 0, 'explore = 10p');
-  close(three.mean, 150, 0, 'mean = 50p');
-  close(three.tails, 500, 0, 'tails = max(500,100p)');
-  close(three.recommended, three.mean, 0, 'primary recommendation is mean tier');
-  const twenty = recommendMcRuns(20);
-  close(twenty.tails, 2000, 0, 'tails = 100p when larger than 500');
+
+  // CLT: N = (z·CV/ε)² with CV from percent spread 10% on one param → CV=0.1
+  const cltNodes = [
+    {
+      id: 'm',
+      blockType: 'mass',
+      parameters: { m: 2, x0: 0, v0: 0 } as Record<string, number>,
+      uncertainty: { m: { kind: 'percent' as const, seed: 1, spread: 10 } },
+    },
+  ];
+  const clt = recommendMcRuns(cltNodes, { confidence: 0.95, relError: 0.05, tailQuantile: 0.95, tailCdfError: 0.02 });
+  close(clt.cv, 0.1, 1e-9, 'percent 10 → CV 0.1');
+  // (1.96*0.1/0.05)^2 ≈ 15.37 → ceil 16 → floored at 30
+  close(clt.mean, 30, 0, 'CLT mean floored at 30');
+  assert(clt.tails >= clt.mean, 'tails N ≥ mean N');
+  assert(clt.screening === clt.mean * (2 * clt.params + 2), 'Saltelli N=M(2p+2)');
+  close(clt.recommended, clt.mean, 0, 'primary recommendation is CLT mean');
+
+  // Two uncorrelated 10% params → CV = √2 · 0.1
+  const two = recommendMcRuns(
+    [
+      ...cltNodes,
+      {
+        id: 'c',
+        blockType: 'damper',
+        parameters: { c: 1 } as Record<string, number>,
+        uncertainty: { c: { kind: 'percent' as const, seed: 2, spread: 10 } },
+      },
+    ],
+    { confidence: 0.95, relError: 0.05 }
+  );
+  close(two.cv, Math.SQRT2 * 0.1, 1e-9, 'RSS CV for two 10% params');
+  assert(two.mean > clt.mean, 'more variance ⇒ larger CLT N');
 
   console.log('selfcheck ok');
 }

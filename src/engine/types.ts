@@ -110,6 +110,12 @@ export interface SimConfig {
    * n>0 = seeded draws from each parameter’s distribution (same seed ⇒ same draw).
    */
   mcRun?: number;
+  /** Confidence level for MC sample-size formulas (default 0.95). */
+  mcConfidence?: number;
+  /** Target relative half-width ε for the mean CI (default 0.05). */
+  mcRelError?: number;
+  /** Tail quantile for percentile sample-size sizing (default 0.95). */
+  mcTailQuantile?: number;
 }
 
 /** Where to linearize the plant for LQR / stability analysis. */

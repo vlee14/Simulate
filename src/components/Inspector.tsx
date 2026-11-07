@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
 import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
-import { countUncertainParams, describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
+import { describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
 import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData, toGraph } from '../model/elements';
@@ -60,10 +60,17 @@ function ModelPane() {
   const setConfig = useStore((state) => state.setConfig);
   const setMeta = useStore((state) => state.setMeta);
   const mcRun = config.mcRun ?? 0;
+  const mcConfidence = config.mcConfidence ?? 0.95;
+  const mcRelError = config.mcRelError ?? 0.05;
+  const mcTailQuantile = config.mcTailQuantile ?? 0.95;
   const advice = useMemo(() => {
     const graph = toGraph(elements);
-    return recommendMcRuns(countUncertainParams(graph.nodes));
-  }, [elements]);
+    return recommendMcRuns(graph.nodes, {
+      confidence: mcConfidence,
+      relError: mcRelError,
+      tailQuantile: mcTailQuantile,
+    });
+  }, [elements, mcConfidence, mcRelError, mcTailQuantile]);
   return (
     <div className="pane">
       <h2>Document</h2>
@@ -111,6 +118,33 @@ function ModelPane() {
           Next run
         </button>
       </div>
+      <h3>Sample-size targets</h3>
+      <label className="field">
+        <span>Confidence</span>
+        <select
+          value={String(mcConfidence)}
+          onChange={(event) => setConfig({ mcConfidence: Number(event.target.value) })}
+        >
+          <option value="0.9">90%</option>
+          <option value="0.95">95%</option>
+          <option value="0.99">99%</option>
+        </select>
+        <em>Two-sided normal CI for the CLT mean formula.</em>
+      </label>
+      <NumberField
+        label="Mean relative half-width ε"
+        help="Want |μ̂−μ| ≤ ε|μ| with the chosen confidence (default 5%)."
+        value={mcRelError}
+        step={0.01}
+        onCommit={(value) => setConfig({ mcRelError: Math.min(0.5, Math.max(0.005, value)) })}
+      />
+      <NumberField
+        label="Tail quantile q"
+        help="Percentile of interest for the tail sample-size formula (e.g. 0.95)."
+        value={mcTailQuantile}
+        step={0.01}
+        onCommit={(value) => setConfig({ mcTailQuantile: Math.min(0.999, Math.max(0.5, value)) })}
+      />
       <div className="mc-advice">
         <p className="lede">{advice.summary}</p>
         {advice.params > 0 ? (
@@ -121,16 +155,24 @@ function ModelPane() {
                 <span>{advice.params}</span>
               </li>
               <li>
-                <span>Explore (10p)</span>
+                <span>Proxy CV</span>
+                <span>{advice.cv.toFixed(3)}</span>
+              </li>
+              <li>
+                <span>Pilot (≈N/4)</span>
                 <span>1…{advice.explore}</span>
               </li>
               <li>
-                <span>Mean stats (50p)</span>
+                <span>CLT mean</span>
                 <span>1…{advice.mean}</span>
               </li>
               <li>
-                <span>Tails (100p)</span>
+                <span>Tails / quantile</span>
                 <span>1…{advice.tails}</span>
+              </li>
+              <li>
+                <span>Saltelli screen</span>
+                <span>1…{advice.screening}</span>
               </li>
             </ul>
             <div className="design-actions">
@@ -144,9 +186,10 @@ function ModelPane() {
             <p className="hint">{advice.detail}</p>
             {mcRun > 0 ? (
               <p className="hint">
-                Progress vs mean tier: {Math.min(mcRun, advice.mean)} / {advice.mean}
-                {mcRun >= advice.mean ? ' · mean tier met' : ''}
-                {mcRun >= advice.tails ? ' · tails tier met' : ''}
+                Progress vs CLT mean: {Math.min(mcRun, advice.mean)} / {advice.mean}
+                {mcRun >= advice.mean ? ' · mean N met' : ''}
+                {mcRun >= advice.tails ? ' · tails N met' : ''}
+                {mcRun >= advice.screening ? ' · screening N met' : ''}
               </p>
             ) : (
               <p className="hint">You are on nominal (run 0). Use runs 1…N for the campaign.</p>

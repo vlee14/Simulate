@@ -37,6 +37,9 @@ export const DEFAULT_CONFIG: SimConfig = {
   startTime: 0,
   speed: 1,
   mcRun: 0,
+  mcConfidence: 0.95,
+  mcRelError: 0.05,
+  mcTailQuantile: 0.95,
 };
 
 export const DEFAULT_DESIGN: DesignConfig = {
