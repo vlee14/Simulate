@@ -130,7 +130,7 @@ function poleModes(poles: Eigenvalue[]): PoleMode[] {
 }
 
 /** Evaluate L(jw) = K (jw I − A)⁻¹ B for state-feedback return ratio. */
-function loopResponse(A: number[][], B: number[][], K: number[], w: number): { re: number; im: number } | null {
+export function loopResponse(A: number[][], B: number[][], K: number[], w: number): { re: number; im: number } | null {
   const n = A.length;
   // (jwI − A)(xRe + j xIm) = B  ⇒
   // [ -A, -wI ] [xRe] = [B]
@@ -174,12 +174,16 @@ function loopResponse(A: number[][], B: number[][], K: number[], w: number): { r
   return { re, im };
 }
 
-function logspace(wMin: number, wMax: number, n: number): number[] {
+export function logspace(wMin: number, wMax: number, n: number): number[] {
   const a = Math.log10(wMin);
   const b = Math.log10(wMax);
   const out: number[] = [];
   for (let i = 0; i < n; i++) out.push(Math.pow(10, a + ((b - a) * i) / Math.max(1, n - 1)));
   return out;
+}
+
+export function closedLoopMatrix(A: number[][], B: number[][], K: number[]): number[][] {
+  return closedLoop(A, B, K);
 }
 
 /** Frequency response of return ratio L(jw)=K(jwI−A)⁻¹B with unwrapped phase. */

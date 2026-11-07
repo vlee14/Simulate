@@ -2,7 +2,16 @@ import { getBlock } from '../engine/blocks';
 import { structureSignature, SimCompileError } from '../engine/compile';
 import { designDynamicsLqr } from '../engine/lqr';
 import { linearizeBlock } from '../engine/linearize';
+import { runMcCampaign, sampleToFreqPoints } from '../engine/mcCampaignRunner';
 import { applyMonteCarlo, countUncertainParams, recommendMcRuns } from '../engine/montecarlo';
+import {
+  clampCampaignSize,
+  freqFlatToPoints,
+  MC_CAMPAIGN_MAX,
+  MC_OVERLAY_DEFAULT,
+  MC_OVERLAY_MAX,
+  McRunSample,
+} from '../engine/mcStats';
 import { SimulationEngine } from '../engine/runtime';
 import { analyzeStability, formatVector, parseVector, StabilityReport } from '../engine/stability';
 import { telemetry } from '../engine/telemetry';
@@ -10,8 +19,8 @@ import { DesignConfig, GraphNode } from '../engine/types';
 import { toGraph } from '../model/elements';
 import { describePoles, useStore } from '../store';
 
-/** Cap MC overlay traces so Design-pane charts stay interactive. */
-const MC_PLOT_OVERLAY_CAP = 48;
+let campaignAbort: AbortController | null = null;
+let campaignToken = 0;
 
 let engine: SimulationEngine | null = null;
 let raf = 0;
@@ -347,42 +356,43 @@ function linearizePlantRun(
   return { A, B: B1, opLabel: op.label };
 }
 
-function buildMcEnsemble(
+function sampleToOverlayReport(sample: McRunSample, ws: number[], nominal: StabilityReport): StabilityReport {
+  return {
+    ...nominal,
+    polesClosed: sample.polesClosed,
+    closedStable: sample.closedStable,
+    spectralAbscissaClosed: sample.spectralAbscissa,
+    freq: sample.freqFlat && (sample.freqFlat as ArrayLike<number>).length ? freqFlatToPoints(sample.freqFlat, ws) : sampleToFreqPoints(sample, ws),
+    margins: sample.gainMarginDb != null || sample.phaseMarginDeg != null
+      ? {
+          gainMarginDb: sample.gainMarginDb,
+          phaseMarginDeg: sample.phaseMarginDeg,
+          gainCrossoverRad: null,
+          phaseCrossoverRad: null,
+          note: 'From MC campaign frequency response',
+        }
+      : nominal.margins,
+    rootLocus: [],
+    summary: [
+      sample.closedStable ? 'Closed loop: asymptotically stable' : 'Closed loop: unstable (or marginally stable)',
+      `MC run ${sample.run}`,
+    ],
+  };
+}
+
+function analyzeSelectedPlant(
   plant: GraphNode,
   K: number[],
   design: DesignConfig,
-  selectedRun: number
-): { run: number; report: StabilityReport }[] {
-  const graph = graphNow();
-  const uncertain = countUncertainParams(graph.nodes);
-  if (uncertain <= 0) return [];
-  const config = useStore.getState().config;
-  const advice = recommendMcRuns(graph.nodes, {
-    confidence: config.mcConfidence ?? 0.95,
-    relError: config.mcRelError ?? 0.05,
-    tailQuantile: config.mcTailQuantile ?? 0.95,
-  });
-  // Prefer explore sizing for overlays; still allow up to the mean tier within the plot cap.
-  const target = Math.min(MC_PLOT_OVERLAY_CAP, Math.max(advice.explore, Math.min(advice.mean, MC_PLOT_OVERLAY_CAP)));
-  const opts = design.analysis?.length ? design.analysis : undefined;
-  const ensemble: { run: number; report: StabilityReport }[] = [];
-  for (let run = 1; run <= target; run++) {
-    try {
-      const { A, B } = linearizePlantRun(plant, run, design);
-      ensemble.push({ run, report: analyzeStability(A, B, K, opts) });
-    } catch {
-      // Skip draws that fail to linearize; keep remaining ensemble.
-    }
+  selectedRun: number,
+  opts: Parameters<typeof analyzeStability>[3]
+): StabilityReport | null {
+  try {
+    const { A, B } = linearizePlantRun(plant, selectedRun, design);
+    return analyzeStability(A, B, K, opts);
+  } catch {
+    return null;
   }
-  if (selectedRun > 0 && !ensemble.some((t) => t.run === selectedRun)) {
-    try {
-      const { A, B } = linearizePlantRun(plant, selectedRun, design);
-      ensemble.push({ run: selectedRun, report: analyzeStability(A, B, K, opts) });
-    } catch {
-      /* ignore */
-    }
-  }
-  return ensemble;
 }
 
 function publishDesignView(args: {
@@ -396,52 +406,136 @@ function publishDesignView(args: {
 }): void {
   const state = useStore.getState();
   const design = state.design;
+  const config = state.config;
   const opts = design.analysis?.length ? design.analysis : undefined;
   const nominalReport = analyzeStability(args.A, args.B, args.K, opts);
-  const selectedRun = Math.max(0, Math.round(state.config.mcRun ?? 0));
-  const mcEnsemble = buildMcEnsemble(args.plant, args.K, design, selectedRun);
+  const selectedRun = Math.max(0, Math.round(config.mcRun ?? 0));
+  const uncertain = countUncertainParams(graphNow().nodes);
 
   let report = nominalReport;
-  let open = describePoles(nominalReport.polesOpen);
-  let closed = describePoles(nominalReport.polesClosed);
   if (selectedRun > 0) {
-    const hit = mcEnsemble.find((t) => t.run === selectedRun);
-    if (hit) {
-      report = hit.report;
-      open = describePoles(hit.report.polesOpen);
-      closed = describePoles(hit.report.polesClosed);
-    } else {
-      try {
-        const { A, B } = linearizePlantRun(args.plant, selectedRun, design);
-        report = analyzeStability(A, B, args.K, opts);
-        open = describePoles(report.polesOpen);
-        closed = describePoles(report.polesClosed);
-      } catch {
-        report = nominalReport;
-      }
-    }
+    report = analyzeSelectedPlant(args.plant, args.K, design, selectedRun, opts) ?? nominalReport;
   }
+
+  const overlayN = Math.min(MC_OVERLAY_MAX, Math.max(0, Math.round(config.mcOverlayCount ?? MC_OVERLAY_DEFAULT)));
+  const advice = recommendMcRuns(graphNow().nodes, {
+    confidence: config.mcConfidence ?? 0.95,
+    relError: config.mcRelError ?? 0.05,
+    tailQuantile: config.mcTailQuantile ?? 0.95,
+  });
+  const campaignN = clampCampaignSize(
+    config.mcCampaignSize ?? Math.min(MC_CAMPAIGN_MAX, Math.max(advice.mean || 0, advice.explore || 0, overlayN))
+  );
 
   const runNote =
     selectedRun > 0
       ? ` Selected MC run ${selectedRun}.`
-      : mcEnsemble.length
-        ? ` Overlay: ${mcEnsemble.length} MC run${mcEnsemble.length === 1 ? '' : 's'} (grey) + nominal (black).`
+      : uncertain > 0
+        ? ` Monte Carlo campaign ${campaignN} runs (bands + ${overlayN} overlay lines).`
         : '';
 
   useStore.getState().setDesignView({
     summary: args.summary + runNote,
-    open,
-    closed,
+    open: describePoles(report.polesOpen),
+    closed: describePoles(report.polesClosed),
     gains: args.appliedGains.length
       ? args.appliedGains
       : args.K.map((value, index) => ({ id: `k${index}`, value: -value })),
     opLabel: args.opLabel,
     report,
     nominalReport,
-    mcEnsemble,
+    mcEnsemble: [],
     selectedRun,
+    mcCampaign: null,
+    mcSamples: null,
+    mcCampaignWs: null,
+    mcCampaignProgress: uncertain > 0 && campaignN > 0 ? { done: 0, total: campaignN } : null,
   });
+
+  if (uncertain <= 0 || campaignN <= 0) return;
+
+  campaignAbort?.abort();
+  campaignAbort = new AbortController();
+  const token = ++campaignToken;
+  const op = resolveOperatingPoint(args.plant, design);
+  const includeAllLines = !!config.mcShowAllLines;
+
+  void runMcCampaign({
+    plantId: args.plant.id,
+    blockType: args.plant.blockType,
+    nodes: graphNow().nodes,
+    xOp: op.x,
+    uOp: op.u,
+    K: args.K,
+    nRuns: campaignN,
+    overlayCount: overlayN,
+    selectedRun,
+    includeAllLines,
+    signal: campaignAbort.signal,
+    onProgress: (done, total) => {
+      if (token !== campaignToken) return;
+      const view = useStore.getState().designView;
+      if (!view) return;
+      useStore.getState().setDesignView({ ...view, mcCampaignProgress: { done, total } });
+    },
+  })
+    .then((result) => {
+      if (token !== campaignToken) return;
+      const view = useStore.getState().designView;
+      if (!view?.nominalReport) return;
+      const overlay = result.stats.overlayRuns
+        .map((run) => {
+          const sample = result.samples.find((s) => s.run === run);
+          if (!sample) return null;
+          return { run, report: sampleToOverlayReport(sample, result.ws, view.nominalReport!) };
+        })
+        .filter((t): t is { run: number; report: StabilityReport } => !!t);
+
+      if (selectedRun > 0 && !overlay.some((t) => t.run === selectedRun)) {
+        const sample = result.samples.find((s) => s.run === selectedRun);
+        if (sample) overlay.push({ run: selectedRun, report: sampleToOverlayReport(sample, result.ws, view.nominalReport) });
+      }
+
+      let nextReport = view.report ?? view.nominalReport;
+      let open = view.open;
+      let closed = view.closed;
+      if (selectedRun > 0) {
+        const hit = overlay.find((t) => t.run === selectedRun);
+        if (hit) {
+          nextReport = hit.report;
+          open = describePoles(hit.report.polesOpen);
+          closed = describePoles(hit.report.polesClosed);
+        }
+      }
+
+      const stablePct = (100 * result.stats.stableFraction).toFixed(1);
+      useStore.getState().setDesignView({
+        ...view,
+        report: nextReport,
+        open,
+        closed,
+        mcEnsemble: overlay,
+        mcCampaign: result.stats,
+        mcSamples: result.samples,
+        mcCampaignWs: result.ws,
+        mcCampaignProgress: null,
+        summary:
+          view.summary.replace(/ Monte Carlo campaign .*/, '').replace(/ Selected MC run \d+\.?/, '').trim() +
+          ` Campaign ${result.stats.ok}/${result.stats.total} ok · ${stablePct}% Hurwitz · ${result.stats.backend} · ${result.stats.elapsedMs.toFixed(0)} ms.` +
+          (selectedRun > 0 ? ` Selected MC run ${selectedRun}.` : ''),
+      });
+      const status = useStore.getState().status;
+      const next = status === 'running' || status === 'paused' ? status : 'idle';
+      useStore.getState().setStatus(next, `MC campaign done · ${stablePct}% closed-loop stable`, []);
+    })
+    .catch((error) => {
+      if (token !== campaignToken) return;
+      if (error instanceof Error && error.message === 'aborted') return;
+      const view = useStore.getState().designView;
+      if (!view) return;
+      useStore.getState().setDesignView({ ...view, mcCampaignProgress: null });
+      useStore.getState().setStatus(useStore.getState().status, error instanceof Error ? error.message : 'MC campaign failed');
+    });
 }
 
 /** Set the Monte Carlo run used for analysis detail / simulation, then refresh stability if plots exist. */
@@ -451,22 +545,50 @@ export function selectMcRun(run: number): void {
   const view = useStore.getState().designView;
   if (!view?.nominalReport) return;
 
-  const hit = next === 0 ? view.nominalReport : view.mcEnsemble?.find((t) => t.run === next)?.report;
-  if (hit) {
+  if (next === 0) {
+    const hit = view.nominalReport;
+    useStore.getState().setDesignView({
+      ...view,
+      selectedRun: 0,
+      report: hit,
+      open: describePoles(hit.polesOpen),
+      closed: describePoles(hit.polesClosed),
+      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').trim(),
+    });
+    return;
+  }
+
+  const fromOverlay = view.mcEnsemble?.find((t) => t.run === next)?.report;
+  if (fromOverlay) {
+    useStore.getState().setDesignView({
+      ...view,
+      selectedRun: next,
+      report: fromOverlay,
+      open: describePoles(fromOverlay.polesOpen),
+      closed: describePoles(fromOverlay.polesClosed),
+      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/\s*$/, '') + ` Selected MC run ${next}.`,
+    });
+    return;
+  }
+
+  const sample = view.mcSamples?.find((s) => s.run === next);
+  if (sample && view.mcCampaignWs && view.nominalReport) {
+    const hit = sampleToOverlayReport(sample, view.mcCampaignWs, view.nominalReport);
+    const ensemble = [...(view.mcEnsemble ?? [])];
+    if (!ensemble.some((t) => t.run === next)) ensemble.push({ run: next, report: hit });
     useStore.getState().setDesignView({
       ...view,
       selectedRun: next,
       report: hit,
+      mcEnsemble: ensemble,
       open: describePoles(hit.polesOpen),
       closed: describePoles(hit.polesClosed),
-      summary:
-        next > 0
-          ? view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/\s*$/, '') + ` Selected MC run ${next}.`
-          : view.summary.replace(/ Selected MC run \d+\.?/, '').trim(),
+      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/\s*$/, '') + ` Selected MC run ${next}.`,
     });
     return;
   }
-  // Selected run is outside the current overlay set — rebuild ensemble + detail.
+
+  // No campaign yet / miss — re-analyze (kicks a new campaign with this selection).
   analyzeController();
 }
 

@@ -8,6 +8,7 @@ import { formatPole } from '../engine/lqr';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, SimDocument } from '../model/document';
 import { edgeDefaults, isEdge, NodeData, toDocument, toElements } from '../model/elements';
 import { LibraryEntry, loadLibrary, persistLibrary } from '../model/library';
+import type { McCampaignStats, McRunSample } from '../engine/mcStats';
 import type { StabilityReport } from '../engine/stability';
 
 export interface DesignView {
@@ -24,6 +25,12 @@ export interface DesignView {
   mcEnsemble?: { run: number; report: StabilityReport }[];
   /** Which MC run the detail report / amber highlight refers to. */
   selectedRun?: number;
+  /** Large-N campaign aggregates (percentile bands, pole cloud, …). */
+  mcCampaign?: McCampaignStats | null;
+  /** Raw campaign samples (for selecting runs outside the overlay set). */
+  mcSamples?: McRunSample[] | null;
+  mcCampaignWs?: number[] | null;
+  mcCampaignProgress?: { done: number; total: number } | null;
 }
 
 interface AppState {

@@ -601,10 +601,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   margin: 8px 0 12px;
 }
 .pole-map svg,
-.stability-plot svg {
+.stability-plot svg,
+.stability-plot canvas {
   display: block;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+.ensemble-chart-stack canvas {
+  border-radius: 8px;
+}
+.ensemble-chart-stack canvas:first-child {
+  border: 1px solid var(--line);
+}
+.ensemble-chart-stack canvas:last-child {
+  border: none;
 }
 .stability-plot-grid {
   display: flex;
