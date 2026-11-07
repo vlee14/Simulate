@@ -191,6 +191,57 @@ export function nudgeState(index: number, amount: number, plantRef?: string): vo
   updateParam(plant.id, 'x0', parts.join(' '));
 }
 
+function findNode(ref: string) {
+  const { elements } = useStore.getState();
+  return elements.find((element) => {
+    if ('source' in element) return false;
+    const data = element.data as { role?: string };
+    return element.id === ref || data.role === ref;
+  });
+}
+
+export function simTime(): number {
+  return engine?.time ?? useStore.getState().time;
+}
+
+/** Write a live value onto a Manual (or any `value` parameter) source. */
+export function setControlValue(blockRef: string, value: number): void {
+  const node = findNode(blockRef);
+  if (!node) return;
+  const data = node.data as { parameters?: Record<string, string | number | boolean> };
+  const min = Number(data.parameters?.min);
+  const max = Number(data.parameters?.max);
+  let next = value;
+  if (Number.isFinite(min) && Number.isFinite(max)) {
+    next = Math.max(Math.min(min, max), Math.min(Math.max(min, max), value));
+  }
+  useStore.getState().updateParam(node.id, 'value', next);
+}
+
+/**
+ * Fire a Stage disturbance: retrigger a Pulse at the current sim time, or nudge plant state.
+ */
+export function fireDisturbance(
+  item: { kind: 'pulse' | 'nudge'; block: string; amount: number; index: number },
+  plantRef?: string
+): void {
+  if (item.kind === 'nudge') {
+    nudgeState(item.index, item.amount, plantRef);
+    return;
+  }
+  const node = findNode(item.block || 'pulse');
+  if (!node) return;
+  const t = simTime();
+  const { updateParam } = useStore.getState();
+  updateParam(node.id, 'amplitude', item.amount);
+  updateParam(node.id, 'delay', t);
+  // Ensure a one-shot pulse width if the block was already spent.
+  const data = node.data as { parameters?: Record<string, string | number | boolean> };
+  const width = Number(data.parameters?.width);
+  if (!Number.isFinite(width) || width <= 0) updateParam(node.id, 'width', 0.18);
+  if (engine) engine.rebuildParams(graphNow().nodes);
+}
+
 /**
  * LQR writes −Kᵢ onto gain blocks with role/id `k0`…`k{n-1}`.
  * Optional role `kref` receives +K₀ for reference feedforward on the first state.

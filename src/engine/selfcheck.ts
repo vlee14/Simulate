@@ -92,10 +92,36 @@ function main(): void {
   const stageCfg = parseStageConfig(stage!.parameters ?? {});
   assert(stageCfg.elements.length >= 3, 'Stage scene should parse to elements');
   assert(stageCfg.nudge.length >= 1, 'Stage nudge buttons should parse');
+  assert(!!stageCfg.control && stageCfg.control.block === 'manual', 'Stage control should bind to Manual');
+  assert(stageCfg.disturbance.some((item) => item.kind === 'pulse'), 'Stage disturbances should include pulse kicks');
+  assert(stageCfg.interact.some((item) => item.target === 'cart' && item.kind === 'nudge'), 'Stage interact should hit cart');
   const tip = stageTrailTip(stageCfg, { x: 0.1, th1: 0.2, th2: -0.1, force: 1 });
   assert(!!tip && Number.isFinite(tip.x) && Number.isFinite(tip.y), 'trail tip should resolve from scene data');
   assert(String(stage!.parameters?.scene ?? '').includes('"type"'), 'Stage scene is JSON data');
   assert(SCENE_CART_PENDULUM.inputs.includes('th1'), 'scene preset is shared data');
+
+  // Live control + pulse disturbance should update sources without special plant code.
+  const controlProbe = new SimulationEngine(
+    [
+      { id: 'manual', blockType: 'manual', parameters: { value: 0, min: -10, max: 10 } },
+      { id: 'pulse', blockType: 'pulse', parameters: { amplitude: 5, delay: 1e9, width: 0.2, period: 0 } },
+      { id: 'sum', blockType: 'sum', parameters: { signs: '++' } },
+    ],
+    [
+      { id: 'e1', source: 'manual', sourceHandle: 'out', target: 'sum', targetHandle: 'in0' },
+      { id: 'e2', source: 'pulse', sourceHandle: 'out', target: 'sum', targetHandle: 'in1' },
+    ],
+    { solver: 'rk4', stepSize: 0.01, stopTime: 1, startTime: 0, speed: 1 }
+  );
+  controlProbe.compile();
+  controlProbe.reset();
+  controlProbe.rebuildParams([
+    { id: 'manual', blockType: 'manual', parameters: { value: 3, min: -10, max: 10 } },
+    { id: 'pulse', blockType: 'pulse', parameters: { amplitude: 5, delay: 0, width: 0.2, period: 0 } },
+    { id: 'sum', blockType: 'sum', parameters: { signs: '++' } },
+  ]);
+  controlProbe.step(0.01);
+  close(controlProbe.compiled!.byId.get('sum')!.outputs.out, 8, 1e-9, 'manual+pulse feedthrough');
 
   const engine = runEngine(doc, 14);
   const plant = engine.compiled!.byId.get('plant')!;
