@@ -8,7 +8,7 @@ import { computeLqr, resetSim } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
 
-const Q_LABELS = ['x₁ / x', 'x₂ / θ₁', 'x₃ / θ₂', 'x₄ / ẋ', 'x₅ / ω₁', 'x₆ / ω₂'];
+const Q_LABELS = ['Q₁ (x₁)', 'Q₂ (x₂)', 'Q₃ (x₃)', 'Q₄ (x₄)', 'Q₅ (x₅)', 'Q₆ (x₆)'];
 
 export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
   mobileOpen,
@@ -198,7 +198,11 @@ function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param |
       <label className="field">
         <span>{spec.label}</span>
         {spec.wide ? (
-          <textarea rows={spec.key === 'text' ? 4 : 2} value={String(value ?? '')} onChange={(event) => onCommit(event.target.value)} />
+          <textarea
+            rows={spec.key === 'scene' ? 6 : spec.key === 'text' ? 4 : 2}
+            value={String(value ?? '')}
+            onChange={(event) => onCommit(event.target.value)}
+          />
         ) : (
           <input value={String(value ?? '')} onChange={(event) => onCommit(event.target.value)} />
         )}
@@ -254,8 +258,7 @@ function DesignPane() {
     <div className="pane">
       <h2>LQR design</h2>
       <p className="lede">
-        Linearize the selected Dynamics plant (ODE, State-Space, Second-Order, …) about the current equilibrium and write gains onto matching feedback blocks.
-        For the cart–pendulum example the law is u = −K(z − r).
+        Linearize the selected Dynamics plant (ODE, State-Space, Second-Order, …) about equilibrium and write −Kᵢ onto gain blocks with roles k0, k1, … (optional kref gets +K₀).
       </p>
       <h3>State weight Q</h3>
       {Q_LABELS.map((label, index) => (
@@ -268,7 +271,7 @@ function DesignPane() {
         />
       ))}
       <h3>Control weight R</h3>
-      <NumberField label="Force" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
+      <NumberField label="R (control)" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
       <button className="primary wide" onClick={() => computeLqr()}>
         Compute LQR and apply
       </button>

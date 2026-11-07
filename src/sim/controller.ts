@@ -3,7 +3,6 @@ import { designDynamicsLqr } from '../engine/lqr';
 import { SimulationEngine } from '../engine/runtime';
 import { telemetry } from '../engine/telemetry';
 import { toGraph } from '../model/elements';
-import { regulatorGains } from '../model/examples';
 import { describePoles, useStore } from '../store';
 
 let engine: SimulationEngine | null = null;
@@ -151,37 +150,51 @@ export function resetSim(): void {
   store.setStatus('idle', 'Ready');
 }
 
-function findPlant() {
+function findDynamicsPlant(preferred?: string) {
   const { elements } = useStore.getState();
-  return elements.find((element) => {
-    if ('source' in element) return false;
+  const nodes = elements.filter((element) => !('source' in element));
+  if (preferred) {
+    const hit = nodes.find((element) => {
+      const data = element.data as { blockType?: string; role?: string };
+      return element.id === preferred || data.role === preferred;
+    });
+    if (hit) return hit;
+  }
+  return nodes.find((element) => {
     const type = (element.data as { blockType?: string })?.blockType;
-    return type === 'ode' || type === 'statespace' || type === 'secondorder' || type === 'dcmotor';
+    return !!type && DESIGNABLE.has(type);
   });
 }
 
-export function nudgePlant(which: 'th1' | 'th2' | 'cart'): void {
-  const amount = which === 'th1' ? 0.12 : which === 'th2' ? -0.12 : 0.6;
-  const index = which === 'th1' ? 1 : which === 'th2' ? 2 : 3;
+/** Nudge continuous state index on a Dynamics plant (or its x0 when idle). */
+export function nudgeState(index: number, amount: number, plantRef?: string): void {
   const { status, updateParam } = useStore.getState();
-  const plant = findPlant();
+  const plant = findDynamicsPlant(plantRef);
   if (!plant) return;
   const data = plant.data as { blockType?: string; parameters: Record<string, string | number> };
-  if (data.blockType !== 'ode') return;
   if (engine && (status === 'running' || status === 'paused')) {
     engine.nudge(plant.id, index, amount);
     telemetry.publish();
+    return;
+  }
+  const key = data.blockType === 'ode' || data.blockType === 'statespace' ? 'x0' : null;
+  if (!key) {
+    updateParam(plant.id, 'x0', amount);
     return;
   }
   const parts = String(data.parameters.x0 ?? '0')
     .trim()
     .split(/[\s,;]+/)
     .map(Number);
-  while (parts.length < 6) parts.push(0);
+  while (parts.length <= index) parts.push(0);
   parts[index] = (Number.isFinite(parts[index]) ? parts[index] : 0) + amount;
   updateParam(plant.id, 'x0', parts.join(' '));
 }
 
+/**
+ * LQR writes −Kᵢ onto gain blocks with role/id `k0`…`k{n-1}`.
+ * Optional role `kref` receives +K₀ for reference feedforward on the first state.
+ */
 export function computeLqr(): void {
   const state = useStore.getState();
   const graph = graphNow();
@@ -195,31 +208,33 @@ export function computeLqr(): void {
   }
   try {
     const result = designDynamicsLqr(plant.blockType, plant.parameters, state.design.Q, state.design.R);
-    const gains = regulatorGains(result.K);
+    const appliedGains: { id: string; value: number }[] = [];
     let applied = 0;
-    for (const [id, value] of Object.entries(gains)) {
-      const node = graph.nodes.find((item) => item.id === id || item.role === id);
-      if (!node || node.blockType !== 'gain') continue;
-      useStore.getState().applyGain(node.id, value);
+    result.K.forEach((value, index) => {
+      const role = `k${index}`;
+      const node = graph.nodes.find((item) => item.id === role || item.role === role);
+      if (!node || node.blockType !== 'gain') return;
+      const next = -value;
+      useStore.getState().applyGain(node.id, next);
+      appliedGains.push({ id: role, value: next });
       applied++;
-    }
-    // Generic fallback: apply K onto gain blocks named gain-0… when regulator roles are absent.
-    if (applied === 0) {
-      result.K.forEach((value, index) => {
-        const node = graph.nodes.find((item) => item.id === `gain-${index}` || item.role === `gain-${index}`);
-        if (!node || node.blockType !== 'gain') return;
-        useStore.getState().applyGain(node.id, -value);
-        applied++;
-      });
+    });
+    const refNode = graph.nodes.find((item) => item.id === 'kref' || item.role === 'kref');
+    if (refNode && refNode.blockType === 'gain' && result.K.length) {
+      useStore.getState().applyGain(refNode.id, result.K[0]);
+      appliedGains.push({ id: 'kref', value: result.K[0] });
+      applied++;
     }
     useStore.getState().setDesignView({
       summary:
         applied > 0
-          ? `Linearized “${plant.blockType}” and wrote ${applied} gain${applied === 1 ? '' : 's'}.`
-          : `Linearized “${plant.blockType}”. Add gain blocks with roles gain-x… or gain-0… to apply K.`,
+          ? `Linearized “${plant.blockType}” and wrote ${applied} gain${applied === 1 ? '' : 's'} (roles k0… / kref).`
+          : `Linearized “${plant.blockType}”. Add gain blocks with roles k0, k1, … (and optional kref).`,
       open: describePoles(result.polesOpen),
       closed: describePoles(result.polesClosed),
-      gains: Object.entries(gains).map(([id, value]) => ({ id, value })),
+      gains: appliedGains.length
+        ? appliedGains
+        : result.K.map((value, index) => ({ id: `k${index}`, value: -value })),
     });
     const stable = result.polesClosed.every((pole) => pole.real < 0);
     const status = useStore.getState().status;

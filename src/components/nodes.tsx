@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { Handle, NodeProps, Position } from 'react-flow-renderer';
 import { getBlock } from '../engine/blocks';
+import { parseStageConfig } from '../engine/scene';
 import { SIGNAL_COLORS } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
 import { useStore } from '../store';
-import { drawScope, drawStage, drawXY, emptyStageView, ScopeSeries } from './draw';
+import { drawScope, drawStage, drawXY, ScopeSeries } from './draw';
 import { DiagramBlock } from './shapes';
 
 function useFrame(draw: () => void, deps: React.DependencyList): React.RefObject<HTMLCanvasElement> {
@@ -126,32 +127,34 @@ export const MeterNode: React.FC<NodeProps> = ({ id, data, selected }) => {
 
 export const ScopeNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const info = data as NodeData;
-  const elements = useStore((state) => state.elements);
-  const time = useStore((state) => state.time);
-  const def = getBlock('scope');
+  const def = getBlock(info.blockType);
   const ports = def ? safePorts(def, info.parameters) : { inputs: [], outputs: [] };
-  const labels = ports.inputs.map((port) => sourceAlias(elements, id, port.id) ?? port.name);
+  const time = useStore((state) => state.time);
+  const elements = useStore((state) => state.elements);
+  const span = Number(info.parameters.timeSpan ?? 10);
   const auto = info.parameters.autoScale !== false;
-  const span = Number(info.parameters.timeSpan) || 10;
-  const yMin = Number(info.parameters.yMin) || -1;
-  const yMax = Number(info.parameters.yMax) || 1;
+  const paramKey = JSON.stringify(info.parameters);
   const ref = useFrame(() => {
     const canvas = ref.current;
     if (!canvas) return;
     const series: ScopeSeries[] = ports.inputs.map((port, index) => ({
-      label: labels[index] || port.name,
+      label: sourceAlias(elements, id, port.id) ?? port.name,
       color: SIGNAL_COLORS[index % SIGNAL_COLORS.length],
       ring: telemetry.series.get(telemetry.key(id, port.id)),
     }));
-    const now = telemetry.series.get(telemetry.key(id, ports.inputs[0]?.id ?? 'in0'))?.last()?.t ?? time;
-    drawScope(canvas, series, { timeSpan: span, now, auto, yMin, yMax });
-  }, [id, labels.join('|'), auto, span, yMin, yMax, time]);
+    drawScope(canvas, series, {
+      timeSpan: span,
+      now: time,
+      auto,
+      yMin: Number(info.parameters.yMin ?? -1),
+      yMax: Number(info.parameters.yMax ?? 1),
+    });
+  }, [id, paramKey, time, elements]);
   return (
-    <div className={`instrument ${selected ? 'is-selected' : ''}`}>
+    <div className={`instrument scope ${selected ? 'is-selected' : ''}`}>
       <Ports inputs={ports.inputs} outputs={[]} labeled={false} />
       <div className="instrument-head">
         <span>{info.alias || 'Scope'}</span>
-        <span>{span.toFixed(0)} s</span>
       </div>
       <canvas ref={ref} className="instrument-canvas" />
     </div>
@@ -161,11 +164,11 @@ export const ScopeNode: React.FC<NodeProps> = ({ id, data, selected }) => {
 export const XYNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const info = data as NodeData;
   const time = useStore((state) => state.time);
-  const span = Number(info.parameters.timeSpan) || 10;
+  const span = Number(info.parameters.timeSpan ?? 10);
   const ref = useFrame(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    const now = telemetry.series.get(telemetry.key(id, 'x'))?.last()?.t ?? time;
+    const now = useStore.getState().time;
     drawXY(canvas, telemetry.series.get(telemetry.key(id, 'x')), telemetry.series.get(telemetry.key(id, 'y')), span, now);
   }, [id, span, time]);
   return (
@@ -185,39 +188,25 @@ export const PlantNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const def = getBlock(info.blockType || 'stage');
   const ports = def ? safePorts(def, info.parameters) : { inputs: [], outputs: [] };
   const paramKey = JSON.stringify(info.parameters);
-  const visual = String(info.parameters.visual ?? 'cart-pendulum');
+  const config = parseStageConfig(info.parameters);
   const ref = useFrame(() => {
     const canvas = ref.current;
     if (!canvas) return;
     const live = telemetry.latest.get(id) ?? {};
-    drawStage(
-      canvas,
-      emptyStageView({
-        visual,
-        x: live.x ?? 0,
-        th1: live.th1 ?? 0,
-        th2: live.th2 ?? 0,
-        theta: live.theta ?? 0,
-        level: live.level ?? 0,
-        flow: live.flow ?? 0,
-        v: live.v ?? 0,
-        torque: live.torque ?? 0,
-        l1: Number(info.parameters.l1 ?? 0.4),
-        l2: Number(info.parameters.l2 ?? 0.4),
-        force: live.force ?? 0,
-        radius: Number(info.parameters.radius ?? 0.35),
-        capacity: Number(info.parameters.capacity ?? 5),
-        stroke: Number(info.parameters.stroke ?? 0.5),
-        trail: telemetry.trails.get(id) ?? [],
-      })
-    );
-  }, [id, paramKey, visual]);
+    const signals: Record<string, number> = {};
+    for (const port of config.inputs) signals[port.id] = live[port.id] ?? 0;
+    drawStage(canvas, {
+      config,
+      signals,
+      trail: telemetry.trails.get(id) ?? [],
+    });
+  }, [id, paramKey]);
   return (
     <div className={`plant ${selected ? 'is-selected' : ''} ${bad ? 'is-bad' : ''}`}>
       <Ports inputs={ports.inputs} outputs={ports.outputs} />
       <div className="instrument-head">
         <span>{info.alias || 'Stage'}</span>
-        <span>{visual}</span>
+        <span>scene</span>
       </div>
       <canvas ref={ref} className="plant-canvas" />
     </div>

@@ -1,6 +1,7 @@
 import { stringifyBlueprint, SubsystemBlueprint } from '../engine/subsystem';
 import { Param } from '../engine/types';
 import { CART_DOUBLE_PENDULUM_ODE } from './plants';
+import { SCENE_CART_PENDULUM, SCENE_MASS_SPRING, SCENE_ROTOR, SCENE_TANK } from './scenes';
 
 export interface BuilderNode {
   id: string;
@@ -64,7 +65,7 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         n('enc1', 'encoder', origin, 420, 40, { counts: 4096, noise: 0.002 }, 'θ₁ encoder'),
         n('enc2', 'encoder', origin, 420, 140, { counts: 4096, noise: 0.002 }, 'θ₂ encoder'),
         n('sensX', 'sensor', origin, 420, 240, { kind: 'signal', gain: 1, noise: 0.01, tau: 0.01 }, 'x sensor'),
-        n('stage', 'stage', origin, 640, 80, { visual: 'cart-pendulum', links: 2, l1: 0.4, l2: 0.4 }, 'Stage'),
+        n('stage', 'stage', origin, 640, 80, { ...SCENE_CART_PENDULUM }, 'Stage'),
       ],
       edges: [
         e('act', 'out', 'plant', 'u1'),
@@ -116,7 +117,7 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         n('angle', 'integrator', origin, 420, 200, { initialCondition: 0 }, 'θ = ∫ω'),
         n('tach', 'sensor', origin, 420, 40, { kind: 'tachometer', gain: 1, noise: 0.02, tau: 0.01 }, 'Speed sensor'),
         n('curr', 'sensor', origin, 420, 120, { kind: 'current', gain: 1, noise: 0.01 }, 'Current sensor'),
-        n('stage', 'stage', origin, 620, 80, { visual: 'rotor', radius: 0.35 }, 'Stage'),
+        n('stage', 'stage', origin, 620, 80, { ...SCENE_ROTOR }, 'Stage'),
       ],
       edges: [
         e('act', 'out', 'motor', 'Va'),
@@ -142,7 +143,7 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         n('vent', 'constant', origin, 200, 220, { value: 0 }, 'Vent'),
         n('tank', 'pneumatic_tank', origin, 400, 100, { C: 0.05, p0: 1 }, 'Tank'),
         n('ps', 'sensor', origin, 580, 40, { kind: 'pressure', gain: 1, noise: 0.02, tau: 0.02 }, 'Pressure sensor'),
-        n('stage', 'stage', origin, 580, 160, { visual: 'tank', capacity: 5 }, 'Stage'),
+        n('stage', 'stage', origin, 580, 160, { ...SCENE_TANK }, 'Stage'),
       ],
       edges: [
         e('supply', 'out', 'valve', 'p1'),
@@ -169,7 +170,7 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         n('damp', 'damper', origin, 160, 220, { c: 0.3 }, 'Damper'),
         n('spring', 'spring', origin, 320, 220, { k: 1 }, 'Spring'),
         n('sens', 'sensor', origin, 500, 40, { kind: 'signal', gain: 1, noise: 0.005, tau: 0.01 }, 'x sensor'),
-        n('stage', 'stage', origin, 500, 140, { visual: 'mass-spring' }, 'Stage'),
+        n('stage', 'stage', origin, 500, 140, { ...SCENE_MASS_SPRING }, 'Stage'),
       ],
       edges: [
         e('act', 'out', 'sum', 'in0'),

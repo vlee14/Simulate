@@ -1,4 +1,5 @@
 import { CompiledModel, compile, RuntimeBlock, SimCompileError } from './compile';
+import { parseStageConfig, stageTrailTip } from './scene';
 import { telemetry } from './telemetry';
 import { GraphEdge, GraphNode, Param, SimConfig } from './types';
 
@@ -196,34 +197,17 @@ export class SimulationEngine {
         const last = this.trailStamp.get(block.id) ?? -Infinity;
         if (forceTrail || this.time - last >= 0.02) {
           this.trailStamp.set(block.id, this.time);
-          const visual = String(block.ctx.parameters.visual ?? 'cart-pendulum');
-          let tipX = 0;
-          let tipY = 0;
-          if (visual === 'cart-pendulum') {
-            const l1 = Number(block.ctx.parameters.l1) || 0.4;
-            const l2 = Number(block.ctx.parameters.l2) || 0.4;
-            const x = block.inputs.x ?? 0;
-            const th1 = block.inputs.th1 ?? 0;
-            const th2 = block.inputs.th2 ?? 0;
-            tipX = x + l1 * Math.sin(th1) + l2 * Math.sin(th2);
-            tipY = l1 * Math.cos(th1) + l2 * Math.cos(th2);
-          } else if (visual === 'rotor') {
-            tipX = Math.cos(block.inputs.theta ?? 0);
-            tipY = Math.sin(block.inputs.theta ?? 0);
-          } else if (visual === 'tank') {
-            tipX = this.time;
-            tipY = block.inputs.level ?? 0;
-          } else {
-            tipX = block.inputs.x ?? 0;
-            tipY = block.inputs.v ?? block.inputs.force ?? 0;
+          const config = parseStageConfig(block.ctx.parameters);
+          const tip = stageTrailTip(config, block.inputs);
+          if (tip) {
+            let trail = telemetry.trails.get(block.id);
+            if (!trail) {
+              trail = [];
+              telemetry.trails.set(block.id, trail);
+            }
+            trail.push(tip);
+            if (trail.length > 360) trail.shift();
           }
-          let trail = telemetry.trails.get(block.id);
-          if (!trail) {
-            trail = [];
-            telemetry.trails.set(block.id, trail);
-          }
-          trail.push({ x: tipX, y: tipY });
-          if (trail.length > 360) trail.shift();
         }
       }
     }

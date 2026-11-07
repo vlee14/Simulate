@@ -4,6 +4,7 @@ import {
   splitExpressions,
 } from './expr';
 import { clampPositive, parseAssignments, solveDense } from './dynamics';
+import { parseStageConfig } from './scene';
 import { BlockContext, BlockDefinition, Param, ParamSpec, PortDef } from './types';
 
 function num(p: Record<string, Param>, key: string, fallback = 0): number {
@@ -634,93 +635,68 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     type: 'stage',
     category: 'Sinks',
     name: 'Stage',
-    description: 'Animates a plant from wired signals. Pick a visual: cart–pendulum, rotor, tank, piston, or mass-spring.',
+    description: 'Generic scene animator. Ports come from `inputs`; drawing comes from a JSON `scene` of boxes, links, disks, tanks, …',
     renderer: 'plant',
     defaultParameters: {
-      visual: 'cart-pendulum',
-      links: 2,
-      l1: 0.4,
-      l2: 0.4,
-      radius: 0.35,
-      capacity: 5,
-      stroke: 0.5,
+      inputs: 'x:mechanical,th1:mechanical,th2:mechanical,force:mechanical',
+      scene:
+        '[{"type":"ground"},{"type":"box","id":"cart","x":"$x","y":0,"w":0.72,"h":0.26,"color":"#8b97a8"},{"type":"link","id":"l1","from":"cart","angle":"$th1","length":0.4,"color":"#e7a23a"},{"type":"link","id":"l2","from":"l1","angle":"$th2","length":0.4,"color":"#5ec8ff"},{"type":"arrow","value":"$force"}]',
+      trail: 'l2',
+      scale: 140,
+      nudge: 'Tip θ₁|1|0.12; Tip θ₂|2|-0.12; Shove cart|3|0.6',
+      nudgePlant: '',
+      readouts: 'x|x|number;θ₁|th1|deg;θ₂|th2|deg;F|force|number',
     },
     parameters: [
       {
-        key: 'visual',
-        label: 'Visual',
-        type: 'select',
+        key: 'inputs',
+        label: 'Input ports',
+        type: 'string',
+        wide: true,
         group: 'Stage',
-        options: [
-          { value: 'cart-pendulum', label: 'Cart–pendulum' },
-          { value: 'rotor', label: 'Rotor / motor' },
-          { value: 'tank', label: 'Tank level' },
-          { value: 'piston', label: 'Piston' },
-          { value: 'mass-spring', label: 'Mass–spring' },
-        ],
+        help: 'Comma list: name or name:domain. Example: x:mechanical,th1:mechanical,force:mechanical',
       },
-      numberField('links', 'Pendulum links', 'Geometry', 1, '1 or 2 (cart–pendulum)'),
-      numberField('l1', 'Link 1 / stroke scale', 'Geometry', 0.05),
-      numberField('l2', 'Link 2 length', 'Geometry', 0.05),
-      numberField('radius', 'Rotor radius', 'Geometry', 0.05),
-      numberField('capacity', 'Tank capacity', 'Geometry', 0.5),
-      numberField('stroke', 'Piston stroke', 'Geometry', 0.05),
+      {
+        key: 'scene',
+        label: 'Scene JSON',
+        type: 'string',
+        wide: true,
+        group: 'Stage',
+        help: 'Array of elements: ground, box, link, disk, tank, piston, springmass, arrow. Use $port for bindings.',
+      },
+      { key: 'trail', label: 'Trail element id', type: 'string', group: 'Stage' },
+      numberField('scale', 'Scale (px / unit)', 'Stage', 10),
+      {
+        key: 'nudge',
+        label: 'Nudge buttons',
+        type: 'string',
+        wide: true,
+        group: 'Stage',
+        help: 'label|stateIndex|amount; … applied to the nudge plant’s continuous state / x0',
+      },
+      {
+        key: 'nudgePlant',
+        label: 'Nudge plant id',
+        type: 'string',
+        group: 'Stage',
+        help: 'Block id or role. Empty = first Dynamics plant on the diagram.',
+      },
+      {
+        key: 'readouts',
+        label: 'Readouts',
+        type: 'string',
+        wide: true,
+        group: 'Stage',
+        help: 'label|port|number|deg; …',
+      },
     ],
     hasDirectFeedthrough: noFeed,
-    ports: (p) => stagePorts(text(p, 'visual', 'cart-pendulum'), Math.round(num(p, 'links', 2))),
+    ports: (p) => ({ inputs: parseStageConfig(p).inputs, outputs: [] }),
     continuousStates: none,
     discreteStates: none,
     outputs: () => undefined,
   },
 ];
-
-function stagePorts(visual: string, links: number): { inputs: PortDef[]; outputs: PortDef[] } {
-  switch (visual) {
-    case 'rotor':
-      return {
-        inputs: [
-          { id: 'theta', name: 'θ', domain: 'mechanical' },
-          { id: 'torque', name: 'T', domain: 'mechanical' },
-        ],
-        outputs: [],
-      };
-    case 'tank':
-      return {
-        inputs: [
-          { id: 'level', name: 'p/level', domain: 'pneumatic' },
-          { id: 'flow', name: 'q', domain: 'pneumatic' },
-        ],
-        outputs: [],
-      };
-    case 'piston':
-      return {
-        inputs: [
-          { id: 'x', name: 'x', domain: 'mechanical' },
-          { id: 'force', name: 'F', domain: 'mechanical' },
-        ],
-        outputs: [],
-      };
-    case 'mass-spring':
-      return {
-        inputs: [
-          { id: 'x', name: 'x', domain: 'mechanical' },
-          { id: 'v', name: 'v', domain: 'mechanical' },
-        ],
-        outputs: [],
-      };
-    case 'cart-pendulum':
-    default: {
-      const n = Math.max(1, Math.min(2, links));
-      const inputs: PortDef[] = [
-        { id: 'x', name: 'x', domain: 'mechanical' },
-        { id: 'th1', name: 'θ₁', domain: 'mechanical' },
-      ];
-      if (n > 1) inputs.push({ id: 'th2', name: 'θ₂', domain: 'mechanical' });
-      inputs.push({ id: 'force', name: 'F', domain: 'mechanical' });
-      return { inputs, outputs: [] };
-    }
-  }
-}
 
 export function domainSummary(type: string, parameters: Record<string, Param>): string {
   switch (type) {

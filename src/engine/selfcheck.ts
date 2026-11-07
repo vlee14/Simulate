@@ -1,12 +1,14 @@
 import { PLANT_RECIPES } from '../model/builder';
-import { documentGraph, pendulumDocument, regulatorGains, oscillatorDocument, motorDocument, pneumaticDocument } from '../model/examples';
+import { documentGraph, pendulumDocument, oscillatorDocument, motorDocument, pneumaticDocument } from '../model/examples';
 import { CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
+import { SCENE_CART_PENDULUM } from '../model/scenes';
 import { compileExpression } from './expr';
 import { SimCompileError, compile } from './compile';
 import { eigenvalues } from './eig';
 import { designDynamicsLqr, lqr } from './lqr';
-import { lagrangianResidual, pendulumDerivatives, DEFAULT_PENDULUM, linearizePendulum } from './physics';
+import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
+import { parseStageConfig, stageTrailTip } from './scene';
 import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
@@ -15,34 +17,6 @@ function assert(cond: boolean, message: string): void {
 
 function close(a: number, b: number, tol: number, message: string): void {
   if (Math.abs(a - b) > tol) throw new Error(`${message}: got ${a}, expected ${b} ± ${tol}`);
-}
-
-function integrate(z0: number[], seconds: number, force: (z: number[], t: number) => number, h = 0.001): number[] {
-  const z = z0.slice();
-  const stage = z.slice();
-  const k1 = [0, 0, 0, 0, 0, 0];
-  const k2 = [0, 0, 0, 0, 0, 0];
-  const k3 = [0, 0, 0, 0, 0, 0];
-  const k4 = [0, 0, 0, 0, 0, 0];
-  const base = z.slice();
-  let t = 0;
-  const deriv = (tNow: number, state: number[], out: number[]) => {
-    pendulumDerivatives(state, force(state, tNow), DEFAULT_PENDULUM, out);
-  };
-  while (t < seconds - 1e-12) {
-    const dt = Math.min(h, seconds - t);
-    base.splice(0, 6, ...z);
-    deriv(t, base, k1);
-    for (let i = 0; i < 6; i++) stage[i] = base[i] + 0.5 * dt * k1[i];
-    deriv(t + 0.5 * dt, stage, k2);
-    for (let i = 0; i < 6; i++) stage[i] = base[i] + 0.5 * dt * k2[i];
-    deriv(t + 0.5 * dt, stage, k3);
-    for (let i = 0; i < 6; i++) stage[i] = base[i] + dt * k3[i];
-    deriv(t + dt, stage, k4);
-    for (let i = 0; i < 6; i++) z[i] = base[i] + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
-    t += dt;
-  }
-  return z;
 }
 
 function runEngine(doc: ReturnType<typeof pendulumDocument>, seconds: number): SimulationEngine {
@@ -74,21 +48,19 @@ function main(): void {
   const scalar = lqr([[0]], [[1]], [1], 1);
   close(scalar.K[0], 1, 1e-5, 'scalar LQR');
 
-  const samples = [
-    [0.2, 0.4, -0.3, 0.1, -0.5, 0.2, 3],
-    [0, 0.01, -0.02, 0, 0, 0, 0],
-    [-0.4, Math.PI, Math.PI, 0.3, 1.2, -0.7, -4],
-    [0.1, 1.2, 2.4, -0.2, 0.4, -1.1, 8],
-  ];
-  for (const sample of samples) {
-    const err = lagrangianResidual(sample.slice(0, 3), sample.slice(3, 6), sample[6], DEFAULT_PENDULUM);
-    assert(err < 5e-4, `Lagrangian residual ${err} for ${sample.join(',')}`);
-  }
+  // Uncontrolled mass-matrix ODE tip-up should fall — pure ODE block, no special plant code.
+  const openLoop = new SimulationEngine(
+    [{ id: 'plant', blockType: 'ode', parameters: { ...CART_DOUBLE_PENDULUM_ODE, x0: '0 0.08 0 0 0 0' } }],
+    [],
+    { solver: 'rk4', stepSize: 0.001, stopTime: 0.5, startTime: 0, speed: 1 }
+  );
+  openLoop.compile();
+  openLoop.reset();
+  while (openLoop.time < 0.45 - 1e-9) openLoop.step(0.001);
+  const fallenTh1 = openLoop.compiled!.byId.get('plant')!.outputs.y1;
+  assert(Math.abs(fallenTh1) > 0.15, `uncontrolled ODE plant should fall, θ1=${fallenTh1}`);
 
-  const fallen = integrate([0, 0.08, 0, 0, 0, 0], 0.45, () => 0);
-  assert(Math.abs(fallen[1]) > 0.15, `uncontrolled pendulum should fall, θ1=${fallen[1]}`);
-
-  const { A, B } = linearizePendulum(DEFAULT_PENDULUM);
+  const { A } = linearizeBlock('ode', { ...CART_DOUBLE_PENDULUM_ODE });
   const open = eigenvalues(A);
   assert(open.length === 6, `expected 6 open-loop poles, got ${open.length}`);
   assert(open.some((e) => e.real > 0.5), `upright equilibrium should be unstable ${JSON.stringify(open)}`);
@@ -98,11 +70,6 @@ function main(): void {
   assert(odeLqr.polesClosed.length === 6, `expected 6 closed-loop poles from ODE, got ${odeLqr.polesClosed.length}`);
   assert(odeLqr.polesClosed.every((e) => e.real < 0), 'ODE LQR closed loop should be stable');
 
-  const ref = lqr(A, B, weights, 0.8);
-  for (let i = 0; i < 6; i++) {
-    assert(Math.abs(odeLqr.K[i] - ref.K[i]) < 0.25, `ODE LQR K[${i}]=${odeLqr.K[i]} vs physics ${ref.K[i]}`);
-  }
-
   const doc = pendulumDocument();
   const designed = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, doc.design.Q, doc.design.R);
   assert(designed.polesClosed.length === 6, `expected 6 closed-loop poles, got ${designed.polesClosed.length}`);
@@ -111,12 +78,25 @@ function main(): void {
     'closed poles',
     designed.polesClosed.map((e) => `${e.real.toFixed(2)}${e.imag ? (e.imag > 0 ? '+' : '') + e.imag.toFixed(2) + 'j' : ''}`).join('  ')
   );
-  const gains = regulatorGains(designed.K);
-  for (const [id, value] of Object.entries(gains)) {
-    const item = doc.nodes.find((entry) => entry.id === id);
-    assert(!!item, `missing ${id}`);
-    close(Number(item!.parameters?.k), value, 1e-6, `baked gain ${id}`);
+  for (let i = 0; i < designed.K.length; i++) {
+    const item = doc.nodes.find((entry) => entry.id === `k${i}`);
+    assert(!!item, `missing k${i}`);
+    close(Number(item!.parameters?.k), -designed.K[i], 1e-6, `baked gain k${i}`);
   }
+  const kref = doc.nodes.find((entry) => entry.id === 'kref');
+  assert(!!kref, 'missing kref');
+  close(Number(kref!.parameters?.k), designed.K[0], 1e-6, 'baked gain kref');
+
+  const stage = doc.nodes.find((entry) => entry.blockType === 'stage');
+  assert(!!stage, 'pendulum demo needs a Stage');
+  const stageCfg = parseStageConfig(stage!.parameters ?? {});
+  assert(stageCfg.elements.length >= 3, 'Stage scene should parse to elements');
+  assert(stageCfg.nudge.length >= 1, 'Stage nudge buttons should parse');
+  const tip = stageTrailTip(stageCfg, { x: 0.1, th1: 0.2, th2: -0.1, force: 1 });
+  assert(!!tip && Number.isFinite(tip.x) && Number.isFinite(tip.y), 'trail tip should resolve from scene data');
+  assert(String(stage!.parameters?.scene ?? '').includes('"type"'), 'Stage scene is JSON data');
+  assert(SCENE_CART_PENDULUM.inputs.includes('th1'), 'scene preset is shared data');
+
   const engine = runEngine(doc, 14);
   const plant = engine.compiled!.byId.get('plant')!;
   const x = plant.outputs.y0;
@@ -168,6 +148,8 @@ function main(): void {
   assert(expanded.nodes.some((node) => node.blockType === 'ode'), 'subsystem should expand to an ODE plant');
   assert(!expanded.nodes.some((node) => node.blockType === 'subsystem'), 'subsystem shell should be removed');
   assert(!expanded.nodes.some((node) => node.blockType === 'inport'), 'inports should be spliced away');
+  const recipeStage = recipe.create({ x: 0, y: 0 }).nodes.find((node) => node.blockType === 'stage');
+  assert(!!recipeStage?.parameters?.scene, 'plant recipe Stage must use scene JSON, not a visual switch');
 
   const eng = new SimulationEngine(
     [
