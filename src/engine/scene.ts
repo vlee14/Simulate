@@ -303,6 +303,18 @@ export function stageTrailTip(config: StageConfig, signals: Record<string, numbe
   return tip ? { x: tip.tipX, y: tip.tipY } : null;
 }
 
+/** Follow point for the trail subject — box/disk center when available, else tip. */
+export function stageFollowPoint(config: StageConfig, signals: Record<string, number>): { x: number; y: number } | null {
+  if (!config.trail) return null;
+  const poses = collectPoses(config, signals);
+  const pose = poses.get(config.trail);
+  if (!pose) return null;
+  return {
+    x: pose.baseX ?? pose.tipX,
+    y: pose.baseY ?? pose.tipY,
+  };
+}
+
 export interface WorldBounds {
   minX: number;
   maxX: number;
@@ -324,7 +336,16 @@ export function stageUsesWorldCamera(config: StageConfig): boolean {
   return config.elements.some((element) => element.type === 'box' || element.type === 'disk' || element.type === 'link');
 }
 
-/** Axis-aligned bounds of live world-space stage geometry. */
+/** True when stage subjects are flying (not ground-contact carts). */
+export function stageIsAirborne(config: StageConfig, signals: Record<string, number>): boolean {
+  return config.elements.some((element) => {
+    if (element.type !== 'box' && element.type !== 'disk') return false;
+    const y = resolveRef(element.y, signals, element.type === 'disk' ? 0.4 : 0);
+    return y > 0.25;
+  });
+}
+
+/** Axis-aligned bounds of live world-space stage geometry (subjects only — not the ground line). */
 export function stageWorldBounds(config: StageConfig, signals: Record<string, number>): WorldBounds | null {
   if (!stageUsesWorldCamera(config)) return null;
   const poses = collectPoses(config, signals);
@@ -343,11 +364,6 @@ export function stageWorldBounds(config: StageConfig, signals: Record<string, nu
     const r = pose.radius ?? 0.1;
     include(pose.tipX, pose.tipY, r);
     if (pose.baseX !== undefined && pose.baseY !== undefined) include(pose.baseX, pose.baseY, r * 0.5);
-  }
-  // Ground is a full-width line at y=0 — keep it in the vertical frame without pinning x to the origin.
-  if (config.elements.some((element) => element.type === 'ground') && Number.isFinite(minX)) {
-    const mid = (minX + maxX) / 2;
-    include(mid, 0, 0);
   }
   if (!Number.isFinite(minX)) return null;
   // Keep a usable minimum extent so a single point still frames.
@@ -377,7 +393,8 @@ function defaultStageCamera(width: number, height: number, scale: number, ground
 
 /**
  * Fit / center the stage camera on live world geometry.
- * Zooms out from the authored scale when content would clip; pans to keep subjects in frame.
+ * Airborne chase scenes follow the trail subject so the lead craft stays centered;
+ * ground demos fit the full subject cluster.
  */
 export function fitStageCamera(
   config: StageConfig,
@@ -388,9 +405,10 @@ export function fitStageCamera(
 ): StageCamera {
   const preferred = config.scale && config.scale > 0 ? config.scale : 100;
   const grounded = config.elements.some((element) => element.type === 'ground');
+  const airborne = stageIsAirborne(config, signals);
   const bounds = stageWorldBounds(config, signals);
   if (!bounds || width < 2 || height < 2) {
-    return settleStageCamera(previous, defaultStageCamera(width, height, preferred, grounded));
+    return settleStageCamera(previous, defaultStageCamera(width, height, preferred, grounded && !airborne));
   }
 
   const marginX = Math.max(18, width * 0.12);
@@ -400,23 +418,40 @@ export function fitStageCamera(
 
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cy = (bounds.minY + bounds.maxY) / 2;
-  // Bias the look toward the trailed subject so chase / tip stay in the sweet spot,
-  // while still framing the full bounds via scale.
-  const tip = stageTrailTip(config, signals);
-  const lookX = tip ? tip.x * 0.4 + cx * 0.6 : cx;
-  let lookY = tip ? tip.y * 0.25 + cy * 0.75 : cy;
+  const follow = stageFollowPoint(config, signals);
 
-  const halfW = Math.max(bounds.maxX - lookX, lookX - bounds.minX, 0.3);
-  const halfH = Math.max(bounds.maxY - lookY, lookY - bounds.minY, 0.3);
-  let scale = Math.min(preferred, viewW / (2 * halfW), viewH / (2 * halfH));
-  scale = Math.max(scale, preferred * 0.18);
+  let lookX: number;
+  let lookY: number;
+  let scale: number;
+
+  if (airborne && follow) {
+    // Chase cam: pin the lead subject to canvas center at near-authored scale.
+    lookX = follow.x;
+    lookY = follow.y;
+    scale = preferred;
+    // Soft-zoom out only while companions are close enough to keep in frame without
+    // shrinking the lead craft to a speck.
+    const halfW = Math.max(bounds.maxX - lookX, lookX - bounds.minX, 0.35);
+    const halfH = Math.max(bounds.maxY - lookY, lookY - bounds.minY, 0.35);
+    const fitAll = Math.min(viewW / (2 * halfW), viewH / (2 * halfH));
+    if (fitAll < preferred && fitAll >= preferred * 0.55) {
+      scale = fitAll;
+    }
+  } else {
+    // Ground / linked demos: center the whole cluster and fit.
+    lookX = follow ? follow.x * 0.25 + cx * 0.75 : cx;
+    lookY = follow ? follow.y * 0.15 + cy * 0.85 : cy;
+    const halfW = Math.max(bounds.maxX - lookX, lookX - bounds.minX, 0.3);
+    const halfH = Math.max(bounds.maxY - lookY, lookY - bounds.minY, 0.3);
+    scale = Math.min(preferred, viewW / (2 * halfW), viewH / (2 * halfH));
+    scale = Math.max(scale, preferred * 0.22);
+  }
 
   const originX = width * 0.5;
-  // Grounded scenes sit slightly low so wheels/ground read as a floor; airborne stays mid-frame.
-  const originY = grounded ? height * 0.58 : height * 0.5;
+  const originY = airborne ? height * 0.5 : grounded ? height * 0.62 : height * 0.5;
 
-  if (grounded) {
-    // If y=0 would fall off the bottom after centering, lift lookY just enough to keep it.
+  if (grounded && !airborne) {
+    // Keep the ground line near the bottom for cart-style scenes.
     const groundY = originY + lookY * scale;
     const maxGround = height - marginY;
     if (groundY > maxGround) {
@@ -424,7 +459,17 @@ export function fitStageCamera(
     }
   }
 
-  return settleStageCamera(previous, { scale, lookX, lookY, originX, originY });
+  const next: StageCamera = { scale, lookX, lookY, originX, originY };
+  // Chase cams must pin the subject every frame — easing lookX/Y makes the craft
+  // drift toward the direction of travel. Only ease scale between frames.
+  if (airborne && follow) {
+    if (!previous) return next;
+    return {
+      ...next,
+      scale: previous.scale + (next.scale - previous.scale) * 0.35,
+    };
+  }
+  return settleStageCamera(previous, next);
 }
 
 /**

@@ -525,6 +525,8 @@ export function quadrotorDocument(): SimDocument {
       node('scope2', 'scope', 1480, 280, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: -1.2, yMax: 1.2 }, 'θ / a_cmd'),
       node('meter', 'meter', 1480, 480, { digits: 2 }, 'range proxy'),
       node('rng', 'fcn', 1320, 520, { expr: 'hypot(u1,u2)' }, 'Range'),
+      // Stage link angles are from vertical; add π/2 so θ=0 draws a level nose.
+      node('noseang', 'fcn', 1480, 560, { expr: 'u1+1.57079632679' }, 'nose ∠'),
       node('stage', 'stage', 1680, 300, { ...SCENE_QUAD }, 'Stage'),
     ],
     edges: [
@@ -585,6 +587,8 @@ export function quadrotorDocument(): SimDocument {
       edge('plant', 'y0', 'stage', 'x'),
       edge('plant', 'y1', 'stage', 'z'),
       edge('plant', 'y4', 'stage', 'theta'),
+      edge('plant', 'y4', 'noseang', 'u1'),
+      edge('noseang', 'out', 'stage', 'nose'),
       edge('plant', 'y6', 'stage', 'xt'),
       edge('plant', 'y7', 'stage', 'zt'),
       edge('tsat', 'out', 'stage', 'thrust'),

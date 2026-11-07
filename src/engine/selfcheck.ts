@@ -26,7 +26,7 @@ import { eigenvalues } from './eig';
 import { designDynamicsLqr, lqr } from './lqr';
 import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
-import { fitStageCamera, parseStageConfig, stageTrailTip, stageWorldBounds } from './scene';
+import { fitStageCamera, parseStageConfig, stageFollowPoint, stageTrailTip, stageWorldBounds, worldToCanvas } from './scene';
 import { analyzeStability, logspace, parseVector } from './stability';
 import { frequencyResponseBatchCpu, packPlant } from './freqBatch';
 import { sampleMcRange } from './mcSample';
@@ -161,6 +161,28 @@ function main(): void {
     originY: 110,
   });
   assert(Math.abs(stale.lookX - cam.lookX) < 0.05, 'camera should snap when the previous look is far away');
+
+  // Airborne chase: keep the trailed quad centered even when the target is far away.
+  const quadCfg = parseStageConfig({ ...SCENE_QUAD });
+  const chase = { x: 12.9, z: 2.9, theta: 0, xt: 1.4, zt: 2.9, thrust: 12 };
+  const follow = stageFollowPoint(quadCfg, chase);
+  assert(!!follow && Math.abs(follow.x - 12.9) < 0.05, 'follow point should track the quad body');
+  const chaseCam = fitStageCamera(quadCfg, chase, 420, 220, null);
+  assert(Math.abs(chaseCam.lookX - follow!.x) < 0.05, 'chase lookX pins the quad');
+  assert(Math.abs(chaseCam.lookY - follow!.y) < 0.05, 'chase lookY pins the quad');
+  assert(chaseCam.scale >= (quadCfg.scale ?? 42) * 0.9, 'chase should keep near-authored scale when target is far');
+  const quadPx = worldToCanvas(chaseCam, follow!.x, follow!.y);
+  assert(Math.abs(quadPx.x - 210) < 1 && Math.abs(quadPx.y - 110) < 1, 'quad should map to canvas center');
+  const lagged = fitStageCamera(quadCfg, chase, 420, 220, {
+    scale: chaseCam.scale,
+    lookX: follow!.x - 3,
+    lookY: follow!.y - 1,
+    originX: 210,
+    originY: 110,
+  });
+  assert(Math.abs(lagged.lookX - follow!.x) < 0.05, 'chase look must not ease behind the craft');
+  const laggedPx = worldToCanvas(lagged, follow!.x, follow!.y);
+  assert(Math.abs(laggedPx.x - 210) < 1, 'quad stays centered even after a lagged previous camera');
 
   // Live control + pulse disturbance should update sources without special plant code.
   const controlProbe = new SimulationEngine(
