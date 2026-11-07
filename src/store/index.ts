@@ -2,7 +2,8 @@ import create from 'zustand';
 import { addEdge, Connection, Edge, Elements, Node } from 'react-flow-renderer';
 import { v4 as uuid } from 'uuid';
 import { getBlock } from '../engine/blocks';
-import { AnalysisOption, DesignConfig, LinearizationPoint, Param, SimConfig } from '../engine/types';
+import { AnalysisOption, DesignConfig, DistKind, LinearizationPoint, Param, ParamUncertainty, SimConfig } from '../engine/types';
+import { newUncertaintySeed } from '../engine/montecarlo';
 import { formatPole } from '../engine/lqr';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, SimDocument } from '../model/document';
 import { edgeDefaults, isEdge, NodeData, toDocument, toElements } from '../model/elements';
@@ -53,6 +54,8 @@ interface AppState {
   setStatus: (status: AppState['status'], message?: string, errorIds?: string[]) => void;
   setTime: (time: number, rate?: number) => void;
   updateParam: (id: string, key: string, value: Param) => void;
+  /** Set / clear a parameter’s Monte Carlo distribution. Seed is assigned once and kept. */
+  updateUncertainty: (id: string, key: string, patch: { kind: DistKind; spread?: number } | null) => void;
   updateAlias: (id: string, alias: string) => void;
   updatePosition: (id: string, x: number, y: number) => void;
   updatePositions: (nodes: Node[]) => void;
@@ -232,6 +235,34 @@ export const useStore = create<AppState>((set, get) => ({
       dirty: true,
     })),
 
+  updateUncertainty: (id, key, patch) =>
+    set((state) => ({
+      elements: state.elements.map((element) => {
+        if (isEdge(element) || element.id !== id) return element;
+        const data = element.data as NodeData;
+        const current = { ...(data.uncertainty ?? {}) };
+        if (!patch || patch.kind === 'none') {
+          delete current[key];
+          return {
+            ...element,
+            data: {
+              ...data,
+              uncertainty: Object.keys(current).length ? current : undefined,
+            },
+          };
+        }
+        const prev = current[key];
+        const next: ParamUncertainty = {
+          kind: patch.kind,
+          seed: prev?.seed ?? newUncertaintySeed(),
+          spread: patch.spread ?? prev?.spread ?? defaultSpread(patch.kind),
+        };
+        current[key] = next;
+        return { ...element, data: { ...data, uncertainty: current } };
+      }),
+      dirty: true,
+    })),
+
   updateAlias: (id, alias) =>
     set((state) => ({
       elements: state.elements.map((element) => {
@@ -407,4 +438,19 @@ export function describePoles(poles: { real: number; imag: number }[]): string[]
   return [...poles]
     .sort((a, b) => b.real - a.real)
     .map((pole) => formatPole(pole));
+}
+
+function defaultSpread(kind: DistKind): number {
+  switch (kind) {
+    case 'percent':
+      return 5;
+    case 'lognormal':
+      return 0.1;
+    case 'uniform':
+      return 0.1;
+    case 'normal':
+      return 0.1;
+    default:
+      return 0;
+  }
 }

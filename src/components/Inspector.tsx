@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
 import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
-import { AnalysisOption, LinearizationPoint, Param, ParamSpec } from '../engine/types';
+import { describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
+import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
-import { isEdge, NodeData } from '../model/elements';
+import { isEdge, NodeData, toGraph } from '../model/elements';
 import { analyzeController, captureLinearizationPoint, computeLqr, resetSim } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
@@ -55,8 +56,21 @@ function ModelPane() {
   const name = useStore((state) => state.name);
   const description = useStore((state) => state.description);
   const config = useStore((state) => state.config);
+  const elements = useStore((state) => state.elements);
   const setConfig = useStore((state) => state.setConfig);
   const setMeta = useStore((state) => state.setMeta);
+  const mcRun = config.mcRun ?? 0;
+  const mcConfidence = config.mcConfidence ?? 0.95;
+  const mcRelError = config.mcRelError ?? 0.05;
+  const mcTailQuantile = config.mcTailQuantile ?? 0.95;
+  const advice = useMemo(() => {
+    const graph = toGraph(elements);
+    return recommendMcRuns(graph.nodes, {
+      confidence: mcConfidence,
+      relError: mcRelError,
+      tailQuantile: mcTailQuantile,
+    });
+  }, [elements, mcConfidence, mcRelError, mcTailQuantile]);
   return (
     <div className="pane">
       <h2>Document</h2>
@@ -88,6 +102,103 @@ function ModelPane() {
           ))}
         </select>
       </label>
+      <h3>Monte Carlo</h3>
+      <NumberField
+        label="Simulation run"
+        help="0 = nominal values. n>0 draws each distributed parameter from its fixed seed (same run ⇒ same draws)."
+        value={mcRun}
+        step={1}
+        onCommit={(value) => setConfig({ mcRun: Math.max(0, Math.round(value)) })}
+      />
+      <div className="design-actions">
+        <button type="button" className="ghost" onClick={() => setConfig({ mcRun: 0 })}>
+          Nominal (0)
+        </button>
+        <button type="button" className="ghost" onClick={() => setConfig({ mcRun: mcRun + 1 })}>
+          Next run
+        </button>
+      </div>
+      <h3>Sample-size targets</h3>
+      <label className="field">
+        <span>Confidence</span>
+        <select
+          value={String(mcConfidence)}
+          onChange={(event) => setConfig({ mcConfidence: Number(event.target.value) })}
+        >
+          <option value="0.9">90%</option>
+          <option value="0.95">95%</option>
+          <option value="0.99">99%</option>
+        </select>
+        <em>Two-sided normal CI for the CLT mean formula.</em>
+      </label>
+      <NumberField
+        label="Mean relative half-width ε"
+        help="Want |μ̂−μ| ≤ ε|μ| with the chosen confidence (default 5%)."
+        value={mcRelError}
+        step={0.01}
+        onCommit={(value) => setConfig({ mcRelError: Math.min(0.5, Math.max(0.005, value)) })}
+      />
+      <NumberField
+        label="Tail quantile q"
+        help="Percentile of interest for the tail sample-size formula (e.g. 0.95)."
+        value={mcTailQuantile}
+        step={0.01}
+        onCommit={(value) => setConfig({ mcTailQuantile: Math.min(0.999, Math.max(0.5, value)) })}
+      />
+      <div className="mc-advice">
+        <p className="lede">{advice.summary}</p>
+        {advice.params > 0 ? (
+          <>
+            <ul className="gain-list">
+              <li>
+                <span>Uncertain params</span>
+                <span>{advice.params}</span>
+              </li>
+              <li>
+                <span>Proxy CV</span>
+                <span>{advice.cv.toFixed(3)}</span>
+              </li>
+              <li>
+                <span>Pilot (≈N/4)</span>
+                <span>1…{advice.explore}</span>
+              </li>
+              <li>
+                <span>CLT mean</span>
+                <span>1…{advice.mean}</span>
+              </li>
+              <li>
+                <span>Tails / quantile</span>
+                <span>1…{advice.tails}</span>
+              </li>
+              <li>
+                <span>Saltelli screen</span>
+                <span>1…{advice.screening}</span>
+              </li>
+            </ul>
+            <div className="design-actions">
+              <button type="button" className="ghost" onClick={() => setConfig({ mcRun: 1 })}>
+                Start run 1
+              </button>
+              <button type="button" className="ghost" onClick={() => setConfig({ mcRun: advice.recommended })}>
+                Jump to {advice.recommended}
+              </button>
+            </div>
+            <p className="hint">{advice.detail}</p>
+            {mcRun > 0 ? (
+              <p className="hint">
+                Progress vs CLT mean: {Math.min(mcRun, advice.mean)} / {advice.mean}
+                {mcRun >= advice.mean ? ' · mean N met' : ''}
+                {mcRun >= advice.tails ? ' · tails N met' : ''}
+                {mcRun >= advice.screening ? ' · screening N met' : ''}
+              </p>
+            ) : (
+              <p className="hint">You are on nominal (run 0). Use runs 1…N for the campaign.</p>
+            )}
+          </>
+        ) : (
+          <p className="hint">{advice.detail}</p>
+        )}
+      </div>
       <p className="hint">Initial conditions are read when you press Run. Gains and plant parameters update live.</p>
     </div>
   );
@@ -96,7 +207,9 @@ function ModelPane() {
 function BlockPane({ id, data }: { id: string; data: NodeData }) {
   const def = getBlock(data.blockType)!;
   const updateParam = useStore((state) => state.updateParam);
+  const updateUncertainty = useStore((state) => state.updateUncertainty);
   const updateAlias = useStore((state) => state.updateAlias);
+  const mcRun = useStore((state) => state.config.mcRun ?? 0);
   const groups = useMemo(() => {
     const map = new Map<string, ParamSpec[]>();
     for (const spec of def.parameters) {
@@ -121,7 +234,15 @@ function BlockPane({ id, data }: { id: string; data: NodeData }) {
         <section key={group}>
           <h3>{group}</h3>
           {specs.map((spec) => (
-            <ParamField key={spec.key} spec={spec} value={data.parameters[spec.key]} onCommit={(value) => updateParam(id, spec.key, value)} />
+            <ParamField
+              key={spec.key}
+              spec={spec}
+              value={data.parameters[spec.key]}
+              uncertainty={data.uncertainty?.[spec.key]}
+              mcRun={mcRun}
+              onCommit={(value) => updateParam(id, spec.key, value)}
+              onUncertainty={(patch) => updateUncertainty(id, spec.key, patch)}
+            />
           ))}
         </section>
       ))}
@@ -179,7 +300,21 @@ function ScopeMetrics({ id }: { id: string }) {
   );
 }
 
-function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param | undefined; onCommit: (value: Param) => void }) {
+function ParamField({
+  spec,
+  value,
+  uncertainty,
+  mcRun,
+  onCommit,
+  onUncertainty,
+}: {
+  spec: ParamSpec;
+  value: Param | undefined;
+  uncertainty?: ParamUncertainty;
+  mcRun: number;
+  onCommit: (value: Param) => void;
+  onUncertainty: (patch: { kind: DistKind; spread?: number } | null) => void;
+}) {
   if (spec.type === 'boolean') {
     return (
       <label className="check">
@@ -219,7 +354,46 @@ function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param |
       </label>
     );
   }
-  return <NumberField label={spec.label} help={spec.help} value={Number(value ?? 0)} step={spec.step} onCommit={onCommit} />;
+  const nominal = Number(value ?? 0);
+  const kind = uncertainty?.kind ?? 'none';
+  const drawn = kind !== 'none' ? drawNumeric(nominal, uncertainty, mcRun) : nominal;
+  return (
+    <div className="param-with-dist">
+      <NumberField label={spec.label} help={spec.help} value={nominal} step={spec.step} onCommit={onCommit} />
+      <div className="dist-row">
+        <label className="field compact">
+          <span>Distribution</span>
+          <select
+            value={kind}
+            onChange={(event) => {
+              const next = event.target.value as DistKind;
+              onUncertainty(next === 'none' ? null : { kind: next, spread: uncertainty?.spread });
+            }}
+          >
+            {DIST_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {kind !== 'none' ? (
+          <NumberField
+            label={kind === 'percent' ? '±%' : kind === 'uniform' ? 'Half-width' : 'σ'}
+            value={uncertainty?.spread ?? 0}
+            step={kind === 'percent' ? 1 : 0.01}
+            onCommit={(spread) => onUncertainty({ kind, spread: Math.max(0, spread) })}
+          />
+        ) : null}
+      </div>
+      {kind !== 'none' ? (
+        <p className="hint dist-hint">
+          seed {uncertainty?.seed ?? '—'} · {describeDraw(uncertainty, nominal, mcRun)}
+          {mcRun > 0 ? ` (sim uses ${drawn})` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function NumberField({

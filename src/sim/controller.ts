@@ -2,6 +2,7 @@ import { getBlock } from '../engine/blocks';
 import { structureSignature, SimCompileError } from '../engine/compile';
 import { designDynamicsLqr } from '../engine/lqr';
 import { linearizeBlock } from '../engine/linearize';
+import { applyMonteCarlo } from '../engine/montecarlo';
 import { SimulationEngine } from '../engine/runtime';
 import { analyzeStability, formatVector, parseVector } from '../engine/stability';
 import { telemetry } from '../engine/telemetry';
@@ -25,6 +26,13 @@ function graphNow() {
   return toGraph(useStore.getState().elements);
 }
 
+/** Graph with Monte Carlo draws applied for the current `config.mcRun` (0 = nominal). */
+function graphForSim() {
+  const graph = graphNow();
+  const run = useStore.getState().config.mcRun ?? 0;
+  return { nodes: applyMonteCarlo(graph.nodes, run), edges: graph.edges };
+}
+
 function fail(error: unknown) {
   cancelAnimationFrame(raf);
   raf = 0;
@@ -43,7 +51,7 @@ function loop(now: number) {
   acc += elapsed * speed;
   const dt = Math.min(0.05, Math.max(1e-5, state.config.stepSize));
   engine.config = { ...state.config, stepSize: dt };
-  engine.rebuildParams(graphNow().nodes);
+  engine.rebuildParams(graphForSim().nodes);
   let steps = 0;
   try {
     while (acc >= dt && engine.time < state.config.stopTime - 1e-9 && steps < 5000) {
@@ -89,7 +97,7 @@ export function installSimulation(): void {
       useStore.getState().setAnimated(false);
       useStore.getState().setStatus('idle', 'Diagram changed. Run again to simulate it.');
     } else if (engine) {
-      engine.rebuildParams(graphNow().nodes);
+      engine.rebuildParams(graphForSim().nodes);
     }
   });
 }
@@ -98,7 +106,8 @@ export function play(): void {
   const state = useStore.getState();
   if (state.status === 'running') return;
   if (!engine || state.status === 'idle' || state.status === 'done' || state.status === 'error') {
-    const graph = graphNow();
+    const structural = graphNow();
+    const graph = graphForSim();
     const config = { ...state.config };
     if (!(config.stepSize > 0)) {
       state.setStatus('error', 'Step size must be positive.');
@@ -109,7 +118,7 @@ export function play(): void {
       engine.compile();
       engine.rebuildParams(graph.nodes);
       engine.reset();
-      signature = structureSignature(graph.nodes, graph.edges);
+      signature = structureSignature(structural.nodes, structural.edges);
     } catch (error) {
       engine = null;
       fail(error);
@@ -122,7 +131,8 @@ export function play(): void {
   lastUi = 0;
   rateWall = lastWall;
   rateSim = engine?.time ?? 0;
-  useStore.getState().setStatus('running', 'Running');
+  const run = useStore.getState().config.mcRun ?? 0;
+  useStore.getState().setStatus('running', run > 0 ? `Running · MC run ${run}` : 'Running');
   useStore.getState().setAnimated(true);
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(loop);
