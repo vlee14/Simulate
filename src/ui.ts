@@ -24,6 +24,9 @@ export const CATEGORY_COLOR: Record<string, string> = {
   Discrete: '#d2a8ff',
   Nonlinear: '#ff8a5b',
   Dynamics: '#ffb085',
+  Sensors: '#7ddea0',
+  Actuators: '#ff8a5b',
+  Subsystem: '#d2a8ff',
   Sinks: '#ff6b8a',
   Annotation: '#8b97a8',
 };

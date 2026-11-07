@@ -5,7 +5,7 @@ import { SIGNAL_COLORS } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
 import { useStore } from '../store';
-import { drawScope, drawStage, drawXY, ScopeSeries } from './draw';
+import { drawScope, drawStage, drawXY, emptyStageView, ScopeSeries } from './draw';
 import { DiagramBlock } from './shapes';
 
 function useFrame(draw: () => void, deps: React.DependencyList): React.RefObject<HTMLCanvasElement> {
@@ -185,26 +185,39 @@ export const PlantNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const def = getBlock(info.blockType || 'stage');
   const ports = def ? safePorts(def, info.parameters) : { inputs: [], outputs: [] };
   const paramKey = JSON.stringify(info.parameters);
+  const visual = String(info.parameters.visual ?? 'cart-pendulum');
   const ref = useFrame(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    const live = telemetry.latest.get(id);
-    drawStage(canvas, {
-      x: live?.x ?? 0,
-      th1: live?.th1 ?? 0,
-      th2: live?.th2 ?? 0,
-      l1: Number(info.parameters.l1 ?? 0.4),
-      l2: Number(info.parameters.l2 ?? 0.4),
-      force: live?.force ?? 0,
-      trail: telemetry.trails.get(id) ?? [],
-    });
-  }, [id, paramKey]);
+    const live = telemetry.latest.get(id) ?? {};
+    drawStage(
+      canvas,
+      emptyStageView({
+        visual,
+        x: live.x ?? 0,
+        th1: live.th1 ?? 0,
+        th2: live.th2 ?? 0,
+        theta: live.theta ?? 0,
+        level: live.level ?? 0,
+        flow: live.flow ?? 0,
+        v: live.v ?? 0,
+        torque: live.torque ?? 0,
+        l1: Number(info.parameters.l1 ?? 0.4),
+        l2: Number(info.parameters.l2 ?? 0.4),
+        force: live.force ?? 0,
+        radius: Number(info.parameters.radius ?? 0.35),
+        capacity: Number(info.parameters.capacity ?? 5),
+        stroke: Number(info.parameters.stroke ?? 0.5),
+        trail: telemetry.trails.get(id) ?? [],
+      })
+    );
+  }, [id, paramKey, visual]);
   return (
     <div className={`plant ${selected ? 'is-selected' : ''} ${bad ? 'is-bad' : ''}`}>
       <Ports inputs={ports.inputs} outputs={ports.outputs} />
       <div className="instrument-head">
         <span>{info.alias || 'Stage'}</span>
-        <span>cart–pendulum</span>
+        <span>{visual}</span>
       </div>
       <canvas ref={ref} className="plant-canvas" />
     </div>

@@ -1,13 +1,44 @@
 import { RingBuffer, TrailPoint } from '../engine/telemetry';
 
 export interface StageView {
+  visual: string;
   x: number;
   th1: number;
   th2: number;
+  theta: number;
+  level: number;
+  flow: number;
+  v: number;
+  torque: number;
   l1: number;
   l2: number;
   force: number;
+  radius: number;
+  capacity: number;
+  stroke: number;
   trail: TrailPoint[];
+}
+
+export function emptyStageView(partial: Partial<StageView> = {}): StageView {
+  return {
+    visual: 'cart-pendulum',
+    x: 0,
+    th1: 0,
+    th2: 0,
+    theta: 0,
+    level: 0,
+    flow: 0,
+    v: 0,
+    torque: 0,
+    l1: 0.4,
+    l2: 0.4,
+    force: 0,
+    radius: 0.35,
+    capacity: 5,
+    stroke: 0.5,
+    trail: [],
+    ...partial,
+  };
 }
 
 export function prep(canvas: HTMLCanvasElement): { ctx: CanvasRenderingContext2D; w: number; h: number } | null {
@@ -34,7 +65,27 @@ export function drawStage(canvas: HTMLCanvasElement, view: StageView): void {
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#0c1016';
   ctx.fillRect(0, 0, w, h);
+  switch (view.visual) {
+    case 'rotor':
+      drawRotor(ctx, w, h, view);
+      break;
+    case 'tank':
+      drawTank(ctx, w, h, view);
+      break;
+    case 'piston':
+      drawPiston(ctx, w, h, view);
+      break;
+    case 'mass-spring':
+      drawMassSpring(ctx, w, h, view);
+      break;
+    case 'cart-pendulum':
+    default:
+      drawCartPendulum(ctx, w, h, view);
+      break;
+  }
+}
 
+function drawCartPendulum(ctx: CanvasRenderingContext2D, w: number, h: number, view: StageView): void {
   const scale = Math.max(70, Math.min(w * 0.22, (h * 0.42) / Math.max(0.3, view.l1 + view.l2)));
   const ground = h * 0.72;
   const cartX = w * 0.5;
@@ -107,15 +158,17 @@ export function drawStage(canvas: HTMLCanvasElement, view: StageView): void {
   ctx.moveTo(cartX, pivotY);
   ctx.lineTo(x1, y1);
   ctx.stroke();
-  ctx.strokeStyle = '#5ec8ff';
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
+  if (view.l2 > 0.01) {
+    ctx.strokeStyle = '#5ec8ff';
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    dot(ctx, x2, y2, 7, '#5ec8ff');
+  }
 
   dot(ctx, cartX, pivotY, 4, '#e7edf5');
   dot(ctx, x1, y1, 6, '#e7a23a');
-  dot(ctx, x2, y2, 7, '#5ec8ff');
 
   const arrow = Math.max(-42, Math.min(42, view.force * 0.45));
   if (Math.abs(view.force) > 0.2) {
@@ -139,14 +192,119 @@ export function drawStage(canvas: HTMLCanvasElement, view: StageView): void {
   ctx.textAlign = 'left';
   ctx.font = '12px "Cascadia Mono", Consolas, monospace';
   ctx.fillStyle = '#e7a23a';
-  ctx.fillText(`θ1 ${(view.th1 * 180 / Math.PI).toFixed(1)}°`, 12, 20);
+  ctx.fillText(`θ1 ${((view.th1 * 180) / Math.PI).toFixed(1)}°`, 12, 20);
   ctx.fillStyle = '#5ec8ff';
-  ctx.fillText(`θ2 ${(view.th2 * 180 / Math.PI).toFixed(1)}°`, 12, 38);
+  ctx.fillText(`θ2 ${((view.th2 * 180) / Math.PI).toFixed(1)}°`, 12, 38);
   ctx.fillStyle = '#c5d0de';
   ctx.fillText(`x ${view.x.toFixed(3)} m`, 12, 56);
   ctx.textAlign = 'right';
   ctx.fillStyle = '#e7edf5';
   ctx.fillText(`${view.force.toFixed(1)} N`, w - 12, 20);
+}
+
+function drawRotor(ctx: CanvasRenderingContext2D, w: number, h: number, view: StageView): void {
+  const cx = w * 0.5;
+  const cy = h * 0.52;
+  const r = Math.min(w, h) * 0.22 * Math.max(0.4, view.radius / 0.35);
+  ctx.strokeStyle = '#243041';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 10, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = '#5ec8ff';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  const hx = cx + Math.cos(view.theta) * r;
+  const hy = cy + Math.sin(view.theta) * r;
+  ctx.strokeStyle = '#e7a23a';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(hx, hy);
+  ctx.stroke();
+  dot(ctx, cx, cy, 5, '#e7edf5');
+  dot(ctx, hx, hy, 6, '#e7a23a');
+  ctx.font = '12px "Cascadia Mono", Consolas, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e7a23a';
+  ctx.fillText(`θ ${((view.theta * 180) / Math.PI).toFixed(1)}°`, 12, 20);
+  ctx.fillStyle = '#c5d0de';
+  ctx.fillText(`T ${view.torque.toFixed(3)}`, 12, 38);
+}
+
+function drawTank(ctx: CanvasRenderingContext2D, w: number, h: number, view: StageView): void {
+  const left = w * 0.3;
+  const top = h * 0.18;
+  const tw = w * 0.4;
+  const th = h * 0.58;
+  const frac = Math.max(0, Math.min(1, view.level / Math.max(1e-6, view.capacity)));
+  roundRect(ctx, left, top, tw, th, 8, '#121821', '#8b97a8');
+  const fillH = th * frac;
+  ctx.fillStyle = 'rgba(125, 222, 160, 0.55)';
+  ctx.fillRect(left + 2, top + th - fillH, tw - 4, fillH);
+  ctx.font = '12px "Cascadia Mono", Consolas, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#7ddea0';
+  ctx.fillText(`level ${view.level.toFixed(2)}`, 12, 20);
+  ctx.fillStyle = '#c5d0de';
+  ctx.fillText(`q ${view.flow.toFixed(3)}`, 12, 38);
+}
+
+function drawPiston(ctx: CanvasRenderingContext2D, w: number, h: number, view: StageView): void {
+  const cy = h * 0.5;
+  const left = w * 0.18;
+  const length = w * 0.64;
+  const stroke = Math.max(0.1, view.stroke);
+  const pos = Math.max(0, Math.min(1, (view.x + stroke) / (2 * stroke)));
+  roundRect(ctx, left, cy - 28, length, 56, 6, '#121821', '#8b97a8');
+  const px = left + 20 + pos * (length - 60);
+  roundRect(ctx, px, cy - 22, 40, 44, 4, '#1c2633', '#e7a23a');
+  ctx.strokeStyle = '#5ec8ff';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(px + 40, cy);
+  ctx.lineTo(left + length - 8, cy);
+  ctx.stroke();
+  ctx.font = '12px "Cascadia Mono", Consolas, monospace';
+  ctx.fillStyle = '#e7a23a';
+  ctx.textAlign = 'left';
+  ctx.fillText(`x ${view.x.toFixed(3)}`, 12, 20);
+  ctx.fillStyle = '#c5d0de';
+  ctx.fillText(`F ${view.force.toFixed(2)}`, 12, 38);
+}
+
+function drawMassSpring(ctx: CanvasRenderingContext2D, w: number, h: number, view: StageView): void {
+  const cy = h * 0.5;
+  const wall = w * 0.16;
+  const scale = Math.min(120, w * 0.28);
+  const massX = wall + 80 + view.x * scale;
+  ctx.strokeStyle = '#8b97a8';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(wall, cy - 40);
+  ctx.lineTo(wall, cy + 40);
+  ctx.stroke();
+  // spring zig-zag
+  ctx.strokeStyle = '#5ec8ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const coils = 8;
+  for (let i = 0; i <= coils; i++) {
+    const t = i / coils;
+    const x = wall + t * (massX - 24 - wall);
+    const y = cy + (i % 2 === 0 ? -12 : 12);
+    if (i === 0) ctx.moveTo(x, cy);
+    else ctx.lineTo(x, y);
+  }
+  ctx.lineTo(massX - 24, cy);
+  ctx.stroke();
+  roundRect(ctx, massX - 24, cy - 24, 48, 48, 6, '#1c2633', '#e7a23a');
+  ctx.font = '12px "Cascadia Mono", Consolas, monospace';
+  ctx.fillStyle = '#e7a23a';
+  ctx.textAlign = 'left';
+  ctx.fillText(`x ${view.x.toFixed(3)}`, 12, 20);
+  ctx.fillStyle = '#c5d0de';
+  ctx.fillText(`v ${view.v.toFixed(3)}`, 12, 38);
 }
 
 export interface ScopeSeries {

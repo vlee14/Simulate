@@ -1,3 +1,4 @@
+import { PLANT_RECIPES } from '../model/builder';
 import { documentGraph, pendulumDocument, regulatorGains, oscillatorDocument, motorDocument, pneumaticDocument } from '../model/examples';
 import { CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
 import { compileExpression } from './expr';
@@ -6,6 +7,7 @@ import { eigenvalues } from './eig';
 import { designDynamicsLqr, lqr } from './lqr';
 import { lagrangianResidual, pendulumDerivatives, DEFAULT_PENDULUM, linearizePendulum } from './physics';
 import { SimulationEngine } from './runtime';
+import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
@@ -156,6 +158,29 @@ function main(): void {
     looped = error instanceof SimCompileError;
   }
   assert(looped, 'algebraic loop should be reported');
+
+  const recipe = PLANT_RECIPES.find((item) => item.id === 'cart-pendulum')!;
+  const blueprint = recipe.blueprint!();
+  const expanded = expandGraph(
+    [{ id: 'pack', blockType: 'subsystem', parameters: { blueprint: stringifyBlueprint(blueprint) } }],
+    []
+  );
+  assert(expanded.nodes.some((node) => node.blockType === 'ode'), 'subsystem should expand to an ODE plant');
+  assert(!expanded.nodes.some((node) => node.blockType === 'subsystem'), 'subsystem shell should be removed');
+  assert(!expanded.nodes.some((node) => node.blockType === 'inport'), 'inports should be spliced away');
+
+  const eng = new SimulationEngine(
+    [
+      { id: 'c', blockType: 'constant', parameters: { value: 1 } },
+      { id: 's', blockType: 'sensor', parameters: { gain: 2, bias: 0.5, noise: 0, tau: 0 } },
+    ],
+    [{ id: 'e', source: 'c', sourceHandle: 'out', target: 's', targetHandle: 'in' }],
+    { solver: 'rk4', stepSize: 0.01, stopTime: 0.05, startTime: 0, speed: 1 }
+  );
+  eng.compile();
+  eng.reset();
+  eng.step(0.01);
+  close(eng.compiled!.byId.get('s')!.outputs.out, 2.5, 1e-9, 'sensor gain/bias');
 
   console.log('selfcheck ok');
 }
