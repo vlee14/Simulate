@@ -115,8 +115,12 @@ The platform organizes blocks into functional categories:
 | **Math Operations** | Gain, Sum (+/-), Product (*), Math Function (sin, cos, exp), Abs | Apply algebraic transformations to incoming signals |
 | **Continuous** | Integrator (1/s), Derivative, Transfer Function, State-Space, PID | Model differential equations and analog dynamic systems |
 | **Dynamics** | ODE, Second-Order, Mass, Inertia, Spring, Damper, DC Motor, RLC, Pneumatic Tank/Valve, Hydraulic Chamber, Thermal | Multi-domain plant building blocks and custom dynamics |
+| **Sensors / Actuators** | Sensor, Encoder, Actuator | Measurement noise/lag and command saturation/lag on the loop |
+| **Subsystem** | Subsystem, Inport, Outport | Package a plant graph; expanded at compile time |
 | **Discrete** | Unit Delay (1/z), Discrete Filter, Zero-Order Hold | Model sampled-data systems, digital control, and DSP |
 | **Nonlinear / Routing** | Saturation, Dead Zone, Switch, Mux / Demux | Signal multiplexing, switching, and non-linear limits |
+
+Use **Plant builder** in the library to insert wired recipes (plant + actuators + sensors + Stage animation), or package the cart–pendulum recipe as one Subsystem block. Stage visuals include cart–pendulum, rotor, tank, piston, and mass–spring.
 
 ---
 

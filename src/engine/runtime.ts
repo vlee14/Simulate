@@ -196,13 +196,27 @@ export class SimulationEngine {
         const last = this.trailStamp.get(block.id) ?? -Infinity;
         if (forceTrail || this.time - last >= 0.02) {
           this.trailStamp.set(block.id, this.time);
-          const l1 = Number(block.ctx.parameters.l1) || 0.4;
-          const l2 = Number(block.ctx.parameters.l2) || 0.4;
-          const x = block.inputs.x ?? 0;
-          const th1 = block.inputs.th1 ?? 0;
-          const th2 = block.inputs.th2 ?? 0;
-          const tipX = x + l1 * Math.sin(th1) + l2 * Math.sin(th2);
-          const tipY = l1 * Math.cos(th1) + l2 * Math.cos(th2);
+          const visual = String(block.ctx.parameters.visual ?? 'cart-pendulum');
+          let tipX = 0;
+          let tipY = 0;
+          if (visual === 'cart-pendulum') {
+            const l1 = Number(block.ctx.parameters.l1) || 0.4;
+            const l2 = Number(block.ctx.parameters.l2) || 0.4;
+            const x = block.inputs.x ?? 0;
+            const th1 = block.inputs.th1 ?? 0;
+            const th2 = block.inputs.th2 ?? 0;
+            tipX = x + l1 * Math.sin(th1) + l2 * Math.sin(th2);
+            tipY = l1 * Math.cos(th1) + l2 * Math.cos(th2);
+          } else if (visual === 'rotor') {
+            tipX = Math.cos(block.inputs.theta ?? 0);
+            tipY = Math.sin(block.inputs.theta ?? 0);
+          } else if (visual === 'tank') {
+            tipX = this.time;
+            tipY = block.inputs.level ?? 0;
+          } else {
+            tipX = block.inputs.x ?? 0;
+            tipY = block.inputs.v ?? block.inputs.force ?? 0;
+          }
           let trail = telemetry.trails.get(block.id);
           if (!trail) {
             trail = [];

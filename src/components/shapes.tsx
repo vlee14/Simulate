@@ -1,11 +1,12 @@
 import React from 'react';
 import { Handle, Position } from 'react-flow-renderer';
 import { formatCompact } from '../engine/blocks';
-import { Param } from '../engine/types';
+import { DOMAIN_COLOR, Param, PortDomain } from '../engine/types';
 
 interface PortRef {
   id: string;
   name: string;
+  domain?: string;
 }
 
 interface Point {
@@ -540,26 +541,40 @@ export const DiagramBlock: React.FC<{
             </span>
           ) : null
         )}
-        {inputs.map((port, index) => (
-          <Handle
-            key={port.id}
-            type="target"
-            position={Position.Left}
-            id={port.id}
-            title={port.name}
-            style={{ top: face.inputs[index]?.y ?? face.height / 2, left: face.inputs[index]?.x ?? 0, right: 'auto' }}
-          />
-        ))}
-        {outputs.map((port, index) => (
-          <Handle
-            key={port.id}
-            type="source"
-            position={Position.Right}
-            id={port.id}
-            title={port.name}
-            style={{ top: face.outputs[index]?.y ?? face.height / 2 }}
-          />
-        ))}
+        {inputs.map((port, index) => {
+          const domain = (port.domain as PortDomain) || 'signal';
+          const color = DOMAIN_COLOR[domain] ?? DOMAIN_COLOR.signal;
+          return (
+            <Handle
+              key={port.id}
+              type="target"
+              position={Position.Left}
+              id={port.id}
+              title={`${port.name} · ${domain}`}
+              style={{
+                top: face.inputs[index]?.y ?? face.height / 2,
+                left: face.inputs[index]?.x ?? 0,
+                right: 'auto',
+                background: color,
+                borderColor: color,
+              }}
+            />
+          );
+        })}
+        {outputs.map((port, index) => {
+          const domain = (port.domain as PortDomain) || 'signal';
+          const color = DOMAIN_COLOR[domain] ?? DOMAIN_COLOR.signal;
+          return (
+            <Handle
+              key={port.id}
+              type="source"
+              position={Position.Right}
+              id={port.id}
+              title={`${port.name} · ${domain}`}
+              style={{ top: face.outputs[index]?.y ?? face.height / 2, background: color, borderColor: color }}
+            />
+          );
+        })}
       </div>
       <div className="sl-caption" title={alias}>
         {alias}

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
+import { stepResponseMetrics } from '../engine/metrics';
 import { Param, ParamSpec } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
@@ -115,6 +116,7 @@ function BlockPane({ id, data }: { id: string; data: NodeData }) {
           ))}
         </section>
       ))}
+      {def.type === 'scope' ? <ScopeMetrics id={id} /> : null}
       {def.category === 'Sinks' ? <ExportButton id={id} /> : null}
       <button
         type="button"
@@ -127,6 +129,44 @@ function BlockPane({ id, data }: { id: string; data: NodeData }) {
         Delete block
       </button>
     </div>
+  );
+}
+
+function ScopeMetrics({ id }: { id: string }) {
+  const time = useStore((state) => state.time);
+  const ring = telemetry.series.get(telemetry.key(id, 'in0')) ?? telemetry.series.get(telemetry.key(id, 'in'));
+  const metrics = stepResponseMetrics(ring);
+  if (!ring || ring.count < 8) {
+    return <p className="hint">Run the model to see step-response metrics for channel 1.</p>;
+  }
+  const fmt = (value: number | null, suffix = '') => (value === null || !Number.isFinite(value) ? '—' : `${value.toFixed(3)}${suffix}`);
+  return (
+    <section>
+      <h3>Step metrics · ch1</h3>
+      <ul className="gain-list">
+        <li>
+          <span>Rise 10–90%</span>
+          <span>{fmt(metrics.riseTime, ' s')}</span>
+        </li>
+        <li>
+          <span>Settling</span>
+          <span>{fmt(metrics.settlingTime, ' s')}</span>
+        </li>
+        <li>
+          <span>Overshoot</span>
+          <span>{fmt(metrics.overshoot, ' %')}</span>
+        </li>
+        <li>
+          <span>Steady state</span>
+          <span>{fmt(metrics.steadyState)}</span>
+        </li>
+        <li>
+          <span>Peak</span>
+          <span>{fmt(metrics.peak)}</span>
+        </li>
+      </ul>
+      <p className="hint">Estimated from the recorded trace at t = {time.toFixed(2)} s.</p>
+    </section>
   );
 }
 

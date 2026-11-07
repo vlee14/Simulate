@@ -51,6 +51,10 @@ interface AppState {
   updatePosition: (id: string, x: number, y: number) => void;
   updatePositions: (nodes: Node[]) => void;
   addBlock: (blockType: string, position: { x: number; y: number }) => void;
+  insertGraph: (
+    nodes: { id: string; blockType: string; x: number; y: number; parameters?: Record<string, Param>; alias?: string; role?: string }[],
+    edges: { source: string; sourceHandle: string; target: string; targetHandle: string }[]
+  ) => void;
   connect: (connection: Connection | Edge) => void;
   removeIds: (ids: string[]) => void;
   setAnimated: (animated: boolean) => void;
@@ -232,9 +236,75 @@ export const useStore = create<AppState>((set, get) => ({
     set((state) => ({ elements: [...state.elements, node], selectedIds: [node.id], message: `Added ${def.name}`, dirty: true }));
   },
 
+  insertGraph: (nodes, edges) => {
+    const idMap = new Map<string, string>();
+    const created: Node[] = [];
+    for (const item of nodes) {
+      const def = getBlock(item.blockType);
+      if (!def) continue;
+      const id = uuid();
+      idMap.set(item.id, id);
+      created.push({
+        id,
+        type: def.renderer,
+        position: { x: item.x, y: item.y },
+        data: {
+          blockType: item.blockType,
+          alias: item.alias ?? def.name,
+          role: item.role,
+          parameters: { ...def.defaultParameters, ...(item.parameters ?? {}) },
+        } as NodeData,
+      });
+    }
+    const wireEdges: Edge[] = edges.flatMap((edge) => {
+      const source = idMap.get(edge.source);
+      const target = idMap.get(edge.target);
+      if (!source || !target) return [];
+      return [
+        {
+          id: uuid(),
+          source,
+          target,
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+          ...edgeDefaults,
+        },
+      ];
+    });
+    set((state) => ({
+      elements: [...state.elements, ...created, ...wireEdges],
+      selectedIds: created.map((node) => node.id),
+      message: `Inserted ${created.length} blocks`,
+      dirty: true,
+    }));
+  },
+
   connect: (connection) => {
     if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return;
     set((state) => {
+      const sourceNode = state.elements.find((element) => !isEdge(element) && element.id === connection.source);
+      const targetNode = state.elements.find((element) => !isEdge(element) && element.id === connection.target);
+      if (sourceNode && targetNode && !isEdge(sourceNode) && !isEdge(targetNode)) {
+        const sourceData = sourceNode.data as NodeData;
+        const targetData = targetNode.data as NodeData;
+        const sourceDef = getBlock(sourceData.blockType);
+        const targetDef = getBlock(targetData.blockType);
+        try {
+          const sourcePort = sourceDef?.ports(sourceData.parameters).outputs.find((port) => port.id === connection.sourceHandle);
+          const targetPort = targetDef?.ports(targetData.parameters).inputs.find((port) => port.id === connection.targetHandle);
+          const a = sourcePort?.domain ?? 'signal';
+          const b = targetPort?.domain ?? 'signal';
+          if (a !== 'signal' && b !== 'signal' && a !== b) {
+            return {
+              ...state,
+              message: `Cannot connect ${a} → ${b}. Domains must match (or use signal).`,
+              status: state.status === 'running' ? state.status : state.status,
+            };
+          }
+        } catch {
+          // Invalid parameters — allow the wire; compile will report the issue.
+        }
+      }
       const kept = state.elements.filter(
         (element) =>
           !(isEdge(element) && element.target === connection.target && element.targetHandle === connection.targetHandle)

@@ -304,6 +304,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   text-transform: uppercase;
   font-weight: 600;
 }
+.library-tabs { padding-bottom: 0; }
+.plant-recipe {
+  align-items: flex-start;
+  cursor: default;
+}
+.plant-recipe .recipe-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.plant-recipe .recipe-actions button {
+  font-size: 12px;
+  padding: 4px 8px;
+}
 .lib-item {
   width: 100%;
   display: flex;

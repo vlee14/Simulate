@@ -1,4 +1,5 @@
 import { getBlock } from './blocks';
+import { expandGraph } from './subsystem';
 import { BlockContext, BlockDefinition, GraphEdge, GraphNode, Param } from './types';
 
 export class SimCompileError extends Error {
@@ -40,11 +41,12 @@ export interface CompiledModel {
 }
 
 export function structureSignature(nodes: GraphNode[], edges: GraphEdge[]): string {
+  const expanded = expandGraph(nodes, edges);
   const parts: string[] = [];
-  const ordered = nodes.slice().sort((a, b) => a.id.localeCompare(b.id));
+  const ordered = expanded.nodes.slice().sort((a, b) => a.id.localeCompare(b.id));
   for (const node of ordered) {
     const def = getBlock(node.blockType);
-    if (!def || def.category === 'Annotation') {
+    if (!def || def.category === 'Annotation' || def.type === 'subsystem') {
       parts.push(node.id, node.blockType);
       continue;
     }
@@ -68,7 +70,7 @@ export function structureSignature(nodes: GraphNode[], edges: GraphEdge[]): stri
       ports.outputs.map((port) => port.id).join(',')
     );
   }
-  const wires = edges.slice().sort((a, b) => a.id.localeCompare(b.id));
+  const wires = expanded.edges.slice().sort((a, b) => a.id.localeCompare(b.id));
   for (const edge of wires) {
     parts.push(edge.source, edge.sourceHandle, edge.target, edge.targetHandle);
   }
@@ -76,14 +78,15 @@ export function structureSignature(nodes: GraphNode[], edges: GraphEdge[]): stri
 }
 
 export function compile(nodes: GraphNode[], edges: GraphEdge[]): CompiledModel {
+  const expanded = expandGraph(nodes, edges);
   const blocks: RuntimeBlock[] = [];
   const byId = new Map<string, RuntimeBlock>();
   let stateSize = 0;
   let discreteSize = 0;
 
-  for (const node of nodes) {
+  for (const node of expanded.nodes) {
     const def = getBlock(node.blockType);
-    if (!def || def.category === 'Annotation') continue;
+    if (!def || def.category === 'Annotation' || def.type === 'subsystem') continue;
     let ports: { inputs: { id: string }[]; outputs: { id: string }[] };
     let stateCount = 0;
     let discCount = 0;
@@ -136,7 +139,7 @@ export function compile(nodes: GraphNode[], edges: GraphEdge[]): CompiledModel {
     byId.set(block.id, block);
   }
 
-  for (const edge of edges) {
+  for (const edge of expanded.edges) {
     const target = byId.get(edge.target);
     const source = byId.get(edge.source);
     if (!target || !source) continue;

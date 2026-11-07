@@ -1,5 +1,6 @@
 import { DOMAIN_BLOCKS, domainSummary } from './domains';
 import { compileExpression, expressionInputCount } from './expr';
+import { IO_BLOCKS, ioSummary } from './io';
 import { BlockContext, BlockDefinition, Param, ParamSpec, PortDef } from './types';
 
 function num(p: Record<string, Param>, key: string, fallback = 0): number {
@@ -970,6 +971,7 @@ export const BLOCKS: BlockDefinition[] = [
     outputs: () => undefined,
   },
   ...DOMAIN_BLOCKS,
+  ...IO_BLOCKS,
 ];
 
 function ssInputs(ctx: BlockContext, m: number): number[] {
@@ -985,7 +987,19 @@ export function getBlock(type: string): BlockDefinition | undefined {
 }
 
 export function libraryGroups(): { category: string; blocks: BlockDefinition[] }[] {
-  const order = ['Sources', 'Math', 'Continuous', 'Discrete', 'Nonlinear', 'Dynamics', 'Sinks', 'Annotation'];
+  const order = [
+    'Sources',
+    'Math',
+    'Continuous',
+    'Discrete',
+    'Nonlinear',
+    'Dynamics',
+    'Sensors',
+    'Actuators',
+    'Subsystem',
+    'Sinks',
+    'Annotation',
+  ];
   return order.map((category) => ({
     category,
     blocks: BLOCKS.filter((block) => block.category === category),
@@ -1040,6 +1054,15 @@ export function blockSummary(def: BlockDefinition, parameters: Record<string, Pa
     case 'thermal_mass':
     case 'conduction':
       return domainSummary(def.type, parameters);
+    case 'sensor':
+    case 'encoder':
+    case 'actuator':
+    case 'inport':
+    case 'outport':
+    case 'subsystem':
+      return ioSummary(def.type, parameters);
+    case 'stage':
+      return text(parameters, 'visual', 'cart-pendulum');
     default:
       return '';
   }

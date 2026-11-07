@@ -287,10 +287,10 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     ],
     hasDirectFeedthrough: noFeed,
     ports: () => ({
-      inputs: [{ id: 'F', name: 'F' }],
+      inputs: [{ id: 'F', name: 'F', domain: 'mechanical' }],
       outputs: [
-        { id: 'x', name: 'x' },
-        { id: 'v', name: 'v' },
+        { id: 'x', name: 'x', domain: 'mechanical' },
+        { id: 'v', name: 'v', domain: 'mechanical' },
       ],
     }),
     continuousStates: () => 2,
@@ -323,10 +323,10 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     ],
     hasDirectFeedthrough: noFeed,
     ports: () => ({
-      inputs: [{ id: 'T', name: 'T' }],
+      inputs: [{ id: 'T', name: 'T', domain: 'mechanical' }],
       outputs: [
-        { id: 'theta', name: 'θ' },
-        { id: 'w', name: 'ω' },
+        { id: 'theta', name: 'θ', domain: 'mechanical' },
+        { id: 'w', name: 'ω', domain: 'mechanical' },
       ],
     }),
     continuousStates: () => 2,
@@ -355,8 +355,8 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     parameters: [numberField('k', 'Stiffness k', 'Mechanical', 0.1)],
     hasDirectFeedthrough: feed,
     ports: () => ({
-      inputs: [{ id: 'in', name: 'x' }],
-      outputs: [{ id: 'out', name: 'F' }],
+      inputs: [{ id: 'in', name: 'x', domain: 'mechanical' }],
+      outputs: [{ id: 'out', name: 'F', domain: 'mechanical' }],
     }),
     continuousStates: none,
     discreteStates: none,
@@ -374,8 +374,8 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     parameters: [numberField('c', 'Damping c', 'Mechanical', 0.05)],
     hasDirectFeedthrough: feed,
     ports: () => ({
-      inputs: [{ id: 'in', name: 'v' }],
-      outputs: [{ id: 'out', name: 'F' }],
+      inputs: [{ id: 'in', name: 'v', domain: 'mechanical' }],
+      outputs: [{ id: 'out', name: 'F', domain: 'mechanical' }],
     }),
     continuousStates: none,
     discreteStates: none,
@@ -403,13 +403,13 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     hasDirectFeedthrough: noFeed,
     ports: () => ({
       inputs: [
-        { id: 'Va', name: 'Va' },
-        { id: 'TL', name: 'TL' },
+        { id: 'Va', name: 'Va', domain: 'electrical' },
+        { id: 'TL', name: 'TL', domain: 'mechanical' },
       ],
       outputs: [
-        { id: 'w', name: 'ω' },
-        { id: 'i', name: 'i' },
-        { id: 'T', name: 'T' },
+        { id: 'w', name: 'ω', domain: 'mechanical' },
+        { id: 'i', name: 'i', domain: 'electrical' },
+        { id: 'T', name: 'T', domain: 'mechanical' },
       ],
     }),
     continuousStates: () => 2,
@@ -634,30 +634,93 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     type: 'stage',
     category: 'Sinks',
     name: 'Stage',
-    description: 'Animates a cart with one or two pendulum links from wired signals.',
+    description: 'Animates a plant from wired signals. Pick a visual: cart–pendulum, rotor, tank, piston, or mass-spring.',
     renderer: 'plant',
-    defaultParameters: { links: 2, l1: 0.4, l2: 0.4 },
+    defaultParameters: {
+      visual: 'cart-pendulum',
+      links: 2,
+      l1: 0.4,
+      l2: 0.4,
+      radius: 0.35,
+      capacity: 5,
+      stroke: 0.5,
+    },
     parameters: [
-      numberField('links', 'Links', 'Geometry', 1, '1 or 2'),
-      numberField('l1', 'Link 1 length', 'Geometry', 0.05),
+      {
+        key: 'visual',
+        label: 'Visual',
+        type: 'select',
+        group: 'Stage',
+        options: [
+          { value: 'cart-pendulum', label: 'Cart–pendulum' },
+          { value: 'rotor', label: 'Rotor / motor' },
+          { value: 'tank', label: 'Tank level' },
+          { value: 'piston', label: 'Piston' },
+          { value: 'mass-spring', label: 'Mass–spring' },
+        ],
+      },
+      numberField('links', 'Pendulum links', 'Geometry', 1, '1 or 2 (cart–pendulum)'),
+      numberField('l1', 'Link 1 / stroke scale', 'Geometry', 0.05),
       numberField('l2', 'Link 2 length', 'Geometry', 0.05),
+      numberField('radius', 'Rotor radius', 'Geometry', 0.05),
+      numberField('capacity', 'Tank capacity', 'Geometry', 0.5),
+      numberField('stroke', 'Piston stroke', 'Geometry', 0.05),
     ],
     hasDirectFeedthrough: noFeed,
-    ports: (p) => {
-      const links = Math.max(1, Math.min(2, Math.round(num(p, 'links', 2))));
-      const inputs: PortDef[] = [
-        { id: 'x', name: 'x' },
-        { id: 'th1', name: 'θ₁' },
-      ];
-      if (links > 1) inputs.push({ id: 'th2', name: 'θ₂' });
-      inputs.push({ id: 'force', name: 'F' });
-      return { inputs, outputs: [] };
-    },
+    ports: (p) => stagePorts(text(p, 'visual', 'cart-pendulum'), Math.round(num(p, 'links', 2))),
     continuousStates: none,
     discreteStates: none,
     outputs: () => undefined,
   },
 ];
+
+function stagePorts(visual: string, links: number): { inputs: PortDef[]; outputs: PortDef[] } {
+  switch (visual) {
+    case 'rotor':
+      return {
+        inputs: [
+          { id: 'theta', name: 'θ', domain: 'mechanical' },
+          { id: 'torque', name: 'T', domain: 'mechanical' },
+        ],
+        outputs: [],
+      };
+    case 'tank':
+      return {
+        inputs: [
+          { id: 'level', name: 'p/level', domain: 'pneumatic' },
+          { id: 'flow', name: 'q', domain: 'pneumatic' },
+        ],
+        outputs: [],
+      };
+    case 'piston':
+      return {
+        inputs: [
+          { id: 'x', name: 'x', domain: 'mechanical' },
+          { id: 'force', name: 'F', domain: 'mechanical' },
+        ],
+        outputs: [],
+      };
+    case 'mass-spring':
+      return {
+        inputs: [
+          { id: 'x', name: 'x', domain: 'mechanical' },
+          { id: 'v', name: 'v', domain: 'mechanical' },
+        ],
+        outputs: [],
+      };
+    case 'cart-pendulum':
+    default: {
+      const n = Math.max(1, Math.min(2, links));
+      const inputs: PortDef[] = [
+        { id: 'x', name: 'x', domain: 'mechanical' },
+        { id: 'th1', name: 'θ₁', domain: 'mechanical' },
+      ];
+      if (n > 1) inputs.push({ id: 'th2', name: 'θ₂', domain: 'mechanical' });
+      inputs.push({ id: 'force', name: 'F', domain: 'mechanical' });
+      return { inputs, outputs: [] };
+    }
+  }
+}
 
 export function domainSummary(type: string, parameters: Record<string, Param>): string {
   switch (type) {

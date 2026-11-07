@@ -1,8 +1,12 @@
 export type Param = number | string | boolean;
 
+/** Physical / signal domain for port coloring and connection checks. */
+export type PortDomain = 'signal' | 'mechanical' | 'electrical' | 'pneumatic' | 'hydraulic' | 'thermal';
+
 export interface PortDef {
   id: string;
   name: string;
+  domain?: PortDomain;
 }
 
 export interface ParamSpec {
@@ -17,6 +21,15 @@ export interface ParamSpec {
   help?: string;
   wide?: boolean;
 }
+
+export const DOMAIN_COLOR: Record<PortDomain, string> = {
+  signal: '#8b97a8',
+  mechanical: '#e7a23a',
+  electrical: '#5ec8ff',
+  pneumatic: '#7ddea0',
+  hydraulic: '#d2a8ff',
+  thermal: '#ff6b8a',
+};
 
 export interface BlockContext {
   id: string;
