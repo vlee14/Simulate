@@ -1,7 +1,23 @@
 import { stringifyBlueprint, SubsystemBlueprint } from '../engine/subsystem';
-import { Param } from '../engine/types';
+import { Param, ParamUncertainty } from '../engine/types';
 import { CART_DOUBLE_PENDULUM_ODE } from './plants';
 import { SCENE_CART_PENDULUM, SCENE_MASS_SPRING, SCENE_ROTOR, SCENE_TANK } from './scenes';
+
+const PENDULUM_NUMERIC = {
+  Mc: 1,
+  m1: 0.25,
+  m2: 0.25,
+  l1: 0.4,
+  l2: 0.4,
+  g: 9.81,
+  b: 0.15,
+  c1: 0.002,
+  c2: 0.002,
+} as const;
+
+function unc(kind: ParamUncertainty['kind'], seed: number, spread: number): ParamUncertainty {
+  return { kind, seed, spread };
+}
 
 export interface BuilderNode {
   id: string;
@@ -11,6 +27,7 @@ export interface BuilderNode {
   parameters?: Record<string, Param>;
   alias?: string;
   role?: string;
+  uncertainty?: Record<string, ParamUncertainty>;
 }
 
 export interface BuilderEdge {
@@ -42,10 +59,11 @@ function n(
   dx: number,
   dy: number,
   parameters?: Record<string, Param>,
-  alias?: string
+  alias?: string,
+  uncertainty?: Record<string, ParamUncertainty>
 ): BuilderNode {
   const p = at(origin, dx, dy);
-  return { id, blockType, x: p.x, y: p.y, parameters, alias, role: id };
+  return { id, blockType, x: p.x, y: p.y, parameters, alias, role: id, uncertainty };
 }
 
 function e(source: string, sourceHandle: string, target: string, targetHandle: string): BuilderEdge {
@@ -64,7 +82,20 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         n('manual', 'manual', origin, 0, 160, { value: 0, min: -25, max: 25 }, 'Hand force'),
         n('pulse', 'pulse', origin, 0, 260, { amplitude: 16, delay: 1e9, width: 0.18, period: 0 }, 'Kick'),
         n('sum', 'sum', origin, 180, 120, { signs: '+++' }, 'Σ F'),
-        n('plant', 'ode', origin, 360, 80, { ...CART_DOUBLE_PENDULUM_ODE }, 'Plant ODE'),
+        n(
+          'plant',
+          'ode',
+          origin,
+          360,
+          80,
+          { ...CART_DOUBLE_PENDULUM_ODE, ...PENDULUM_NUMERIC },
+          'Plant ODE',
+          {
+            m1: unc('percent', 7101, 8),
+            m2: unc('percent', 7102, 8),
+            b: unc('percent', 7103, 20),
+          }
+        ),
         n('enc1', 'encoder', origin, 580, 40, { counts: 4096, noise: 0.002 }, 'θ₁ encoder'),
         n('enc2', 'encoder', origin, 580, 140, { counts: 4096, noise: 0.002 }, 'θ₂ encoder'),
         n('sensX', 'sensor', origin, 580, 240, { kind: 'signal', gain: 1, noise: 0.01, tau: 0.01 }, 'x sensor'),
@@ -88,7 +119,7 @@ export const PLANT_RECIPES: PlantRecipe[] = [
       nodes: [
         { id: 'u', blockType: 'inport', parameters: { name: 'u', domain: 'signal' } },
         { id: 'act', blockType: 'actuator', parameters: { kind: 'force', upper: 80, lower: -80, tau: 0.02 } },
-        { id: 'plant', blockType: 'ode', parameters: { ...CART_DOUBLE_PENDULUM_ODE } },
+        { id: 'plant', blockType: 'ode', parameters: { ...CART_DOUBLE_PENDULUM_ODE, ...PENDULUM_NUMERIC } },
         { id: 'enc1', blockType: 'encoder', parameters: { counts: 4096, noise: 0.002 } },
         { id: 'enc2', blockType: 'encoder', parameters: { counts: 4096, noise: 0.002 } },
         { id: 'x', blockType: 'outport', parameters: { name: 'x', domain: 'mechanical' } },
@@ -118,7 +149,20 @@ export const PLANT_RECIPES: PlantRecipe[] = [
     create: (origin) => ({
       nodes: [
         n('act', 'actuator', origin, 0, 100, { kind: 'voltage', upper: 48, lower: -48, tau: 0.01 }, 'Voltage actuator'),
-        n('motor', 'dcmotor', origin, 200, 80, { R: 1, L: 0.05, Kt: 0.1, Kb: 0.1, J: 0.02, b: 0.05 }, 'DC motor'),
+        n(
+          'motor',
+          'dcmotor',
+          origin,
+          200,
+          80,
+          { R: 1, L: 0.05, Kt: 0.1, Kb: 0.1, J: 0.02, b: 0.05 },
+          'DC motor',
+          {
+            R: unc('percent', 7201, 10),
+            J: unc('percent', 7202, 15),
+            b: unc('percent', 7203, 20),
+          }
+        ),
         n('load', 'constant', origin, 200, 220, { value: 0 }, 'TL'),
         n('angle', 'integrator', origin, 420, 200, { initialCondition: 0 }, 'θ = ∫ω'),
         n('tach', 'sensor', origin, 420, 40, { kind: 'tachometer', gain: 1, noise: 0.02, tau: 0.01 }, 'Speed sensor'),
@@ -133,6 +177,7 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         e('motor', 'w', 'angle', 'in'),
         e('angle', 'out', 'stage', 'theta'),
         e('motor', 'T', 'stage', 'torque'),
+        e('motor', 'w', 'stage', 'omega'),
       ],
     }),
   },
@@ -145,9 +190,13 @@ export const PLANT_RECIPES: PlantRecipe[] = [
       nodes: [
         n('supply', 'constant', origin, 0, 40, { value: 5 }, 'Supply'),
         n('open', 'actuator', origin, 0, 160, { kind: 'signal', upper: 1, lower: 0, tau: 0.05 }, 'Opening'),
-        n('valve', 'pneumatic_valve', origin, 200, 80, { Cd: 0.35 }, 'Valve'),
+        n('valve', 'pneumatic_valve', origin, 200, 80, { Cd: 0.35 }, 'Valve', {
+          Cd: unc('percent', 7301, 15),
+        }),
         n('vent', 'constant', origin, 200, 220, { value: 0 }, 'Vent'),
-        n('tank', 'pneumatic_tank', origin, 400, 100, { C: 0.05, p0: 1 }, 'Tank'),
+        n('tank', 'pneumatic_tank', origin, 400, 100, { C: 0.05, p0: 1 }, 'Tank', {
+          C: unc('percent', 7302, 12),
+        }),
         n('ps', 'sensor', origin, 580, 40, { kind: 'pressure', gain: 1, noise: 0.02, tau: 0.02 }, 'Pressure sensor'),
         n('stage', 'stage', origin, 580, 160, { ...SCENE_TANK }, 'Stage'),
       ],
@@ -173,9 +222,15 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         n('act', 'actuator', origin, 0, 40, { kind: 'force', upper: 5, lower: -5, tau: 0.02 }, 'Force actuator'),
         n('manual', 'manual', origin, 0, 160, { value: 0, min: -5, max: 5 }, 'Hand force'),
         n('sum', 'sum', origin, 180, 70, { signs: '++--' }, 'Σ F'),
-        n('mass', 'mass', origin, 360, 80, { m: 1, x0: 0, v0: 0 }, 'Mass'),
-        n('damp', 'damper', origin, 180, 220, { c: 0.3 }, 'Damper'),
-        n('spring', 'spring', origin, 360, 220, { k: 1 }, 'Spring'),
+        n('mass', 'mass', origin, 360, 80, { m: 1, x0: 0, v0: 0 }, 'Mass', {
+          m: unc('percent', 7401, 10),
+        }),
+        n('damp', 'damper', origin, 180, 220, { c: 0.3 }, 'Damper', {
+          c: unc('percent', 7402, 20),
+        }),
+        n('spring', 'spring', origin, 360, 220, { k: 1 }, 'Spring', {
+          k: unc('percent', 7403, 10),
+        }),
         n('sens', 'sensor', origin, 540, 40, { kind: 'signal', gain: 1, noise: 0.005, tau: 0.01 }, 'x sensor'),
         n('stage', 'stage', origin, 540, 140, { ...SCENE_MASS_SPRING }, 'Stage'),
       ],

@@ -1,9 +1,15 @@
 import { getBlock } from '../engine/blocks';
 import { designDynamicsLqr } from '../engine/lqr';
-import { GraphEdge, GraphNode } from '../engine/types';
+import { GraphEdge, GraphNode, ParamUncertainty } from '../engine/types';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, DocNode, SimDocument } from './document';
 import { CART_DOUBLE_PENDULUM_ODE } from './plants';
-import { SCENE_CART_PENDULUM, SCENE_MASS_SPRING, SCENE_ROTOR, SCENE_TANK } from './scenes';
+import {
+  SCENE_CART_PENDULUM,
+  SCENE_MASS_SPRING,
+  SCENE_ROTOR,
+  SCENE_SECOND_ORDER,
+  SCENE_TANK,
+} from './scenes';
 
 function node(
   id: string,
@@ -12,33 +18,85 @@ function node(
   y: number,
   parameters?: Record<string, string | number | boolean>,
   alias?: string,
-  role?: string
+  role?: string,
+  uncertainty?: Record<string, ParamUncertainty>
 ): DocNode {
-  return { id, blockType, x, y, parameters, alias, role: role ?? id };
+  return { id, blockType, x, y, parameters, alias, role: role ?? id, uncertainty };
 }
 
 function edge(source: string, sourceHandle: string, target: string, targetHandle: string) {
   return { source, sourceHandle, target, targetHandle };
 }
 
-export function pendulumDocument(): SimDocument {
-  const design = {
-    ...DEFAULT_DESIGN,
-    Q: DEFAULT_DESIGN.Q.slice(),
-    analysis: DEFAULT_DESIGN.analysis.slice(),
+/** Stable demo seeds so every open of the template draws the same MC run n. */
+function unc(kind: ParamUncertainty['kind'], seed: number, spread: number): ParamUncertainty {
+  return { kind, seed, spread };
+}
+
+/** Shared sim config for demos that exercise Monte Carlo campaigns. */
+function mcConfig(patch: Partial<SimDocument['config']> = {}): SimDocument['config'] {
+  return {
+    ...DEFAULT_CONFIG,
+    solver: 'rk4',
+    startTime: 0,
+    speed: 1,
+    mcRun: 0,
+    mcCampaignSize: 1000,
+    mcOverlayCount: 96,
+    mcShowAllLines: false,
+    mcConfidence: 0.95,
+    mcRelError: 0.05,
+    mcTailQuantile: 0.95,
+    ...patch,
   };
-  // Generic LQR roles: ki ← −Kᵢ, optional kref ← +K₀
+}
+
+function designConfig(patch: Partial<SimDocument['design']> = {}): SimDocument['design'] {
+  return {
+    ...DEFAULT_DESIGN,
+    Q: (patch.Q ?? DEFAULT_DESIGN.Q).slice(),
+    analysis: (patch.analysis ?? DEFAULT_DESIGN.analysis).slice(),
+    opMode: patch.opMode ?? 'equilibrium',
+    xOp: patch.xOp ?? '',
+    uOp: patch.uOp ?? '0',
+    R: patch.R ?? DEFAULT_DESIGN.R,
+  };
+}
+
+/** Numeric plant params override the constants string inside the ODE binder — enables MC draws. */
+const PENDULUM_NUMERIC = {
+  Mc: 1,
+  m1: 0.25,
+  m2: 0.25,
+  l1: 0.4,
+  l2: 0.4,
+  g: 9.81,
+  b: 0.15,
+  c1: 0.002,
+  c2: 0.002,
+} as const;
+
+export function pendulumDocument(): SimDocument {
+  const design = designConfig();
   let K = [0, 0, 0, 0, 0, 0];
   try {
-    K = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, design.Q, design.R).K;
+    K = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE, ...PENDULUM_NUMERIC }, design.Q, design.R).K;
   } catch (error) {
     console.warn(error);
   }
   const deg = 180 / Math.PI;
   const nodes: DocNode[] = [
-    node('note-law', 'note', 16, 8, {
-      text: 'Generic LQR roles: u = kref·r + Σ ki·zi with ki=−Ki, kref=+K0. Plant is a mass-matrix ODE.',
-    }, 'Control law'),
+    node(
+      'note-law',
+      'note',
+      16,
+      8,
+      {
+        text:
+          'Design pane: Analyze stability (bands + overlay) or Compute LQR. Plant params carry % Monte Carlo — set Campaign size then Analyze. Stage: drag / ←→ / Kick.',
+      },
+      'Control law'
+    ),
     node('ref', 'constant', 16, 96, { value: 0 }, 'x ref'),
     node('kref', 'gain', 132, 93, { k: K[0] }, 'K₀ r'),
     node('k0', 'gain', 248, 93, { k: -K[0] }, '−K₀ x'),
@@ -52,10 +110,27 @@ export function pendulumDocument(): SimDocument {
     node('pulse', 'pulse', 553, 392, { amplitude: 16, delay: 1e9, width: 0.18, period: 0 }, 'Disturbance'),
     node('manual', 'manual', 553, 488, { value: 0, min: -25, max: 25 }, 'Hand force'),
     node('sum-f', 'sum', 685, 280, { signs: '+++' }, 'Σ F'),
-    node('plant', 'ode', 822, 217, { ...CART_DOUBLE_PENDULUM_ODE }, 'ODE plant'),
+    node(
+      'plant',
+      'ode',
+      822,
+      217,
+      { ...CART_DOUBLE_PENDULUM_ODE, ...PENDULUM_NUMERIC },
+      'ODE plant',
+      'plant',
+      {
+        m1: unc('percent', 1101, 8),
+        m2: unc('percent', 1102, 8),
+        l1: unc('percent', 1103, 5),
+        l2: unc('percent', 1104, 5),
+        b: unc('percent', 1105, 20),
+        c1: unc('percent', 1106, 25),
+        c2: unc('percent', 1107, 25),
+      }
+    ),
     node('stage', 'stage', 822, 430, { ...SCENE_CART_PENDULUM }, 'Stage'),
     node('note-plant', 'note', 822, 16, {
-      text: 'Stage control / disturbance / interact are data strings. Drag the stage, hold ←/→, or fire Kick buttons.',
+      text: 'Properties → plant: distributions on m₁,m₂,ℓ,b,c. Toolbar MC run selects a draw for simulation; Design campaign overlays Bode/poles.',
     }),
     node('scope-cart', 'scope', 1188, 24, { inputCount: 2, timeSpan: 16, autoScale: true, yMin: -1, yMax: 1 }, 'Cart & force'),
     node('xy', 'xy', 1468, 24, { timeSpan: 16 }, 'θ₁ vs θ₂'),
@@ -103,8 +178,8 @@ export function pendulumDocument(): SimDocument {
   return {
     name: 'Inverted double pendulum',
     description:
-      'State feedback on a generic mass-matrix ODE plant, with a data-driven Stage scene — no demo-specific engine code.',
-    config: { ...DEFAULT_CONFIG, stopTime: 16, stepSize: 0.001, solver: 'rk4', speed: 1, startTime: 0 },
+      'LQR state feedback on a mass-matrix ODE with Monte Carlo plant uncertainty, Design-pane stability campaigns, and a data-driven Stage (control / kick / interact).',
+    config: mcConfig({ stopTime: 16, stepSize: 0.001, mcCampaignSize: 2000 }),
     design,
     nodes,
     edges,
@@ -114,19 +189,26 @@ export function pendulumDocument(): SimDocument {
 export function oscillatorDocument(): SimDocument {
   return {
     name: 'Mass-spring-damper',
-    description: 'Built from Mass, Spring, and Damper blocks. A step force settles at x = F/k.',
-    config: { solver: 'rk4', stepSize: 0.002, stopTime: 14, startTime: 0, speed: 1 },
-    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
+    description:
+      'Mass, Spring, and Damper with % uncertainty on m, c, k. Use Design → Analyze for MC bands; Stage Hand force / Impulse for disturbances.',
+    config: mcConfig({ stepSize: 0.002, stopTime: 14, mcCampaignSize: 1500 }),
+    design: designConfig({ Q: [40, 10, 0, 0, 0, 0], R: 1 }),
     nodes: [
       node('note', 'note', 16, 8, {
-        text: 'm = 1, c = 0.3, k = 1. Stage Hand force / Impulse use Manual + state nudge — same generic bindings as other plants.',
+        text: 'MC on m, c, k. Design → Analyze stability about equilibrium. Stage: Force slider, Impulse, drag the mass.',
       }),
       node('force', 'step', 16, 118, { stepTime: 0.4, initialValue: 0, finalValue: 1 }, 'Step'),
       node('manual', 'manual', 16, 230, { value: 0, min: -5, max: 5 }, 'Hand force'),
       node('sum', 'sum', 160, 104, { signs: '++--' }, 'Σ F'),
-      node('mass', 'mass', 320, 112, { m: 1, x0: 0, v0: 0 }, 'Mass'),
-      node('damper', 'damper', 160, 300, { c: 0.3 }, 'Damper'),
-      node('spring', 'spring', 320, 300, { k: 1 }, 'Spring'),
+      node('mass', 'mass', 320, 112, { m: 1, x0: 0, v0: 0 }, 'Mass', 'mass', {
+        m: unc('percent', 2101, 10),
+      }),
+      node('damper', 'damper', 160, 300, { c: 0.3 }, 'Damper', 'damper', {
+        c: unc('percent', 2102, 20),
+      }),
+      node('spring', 'spring', 320, 300, { k: 1 }, 'Spring', 'spring', {
+        k: unc('percent', 2103, 10),
+      }),
       node('scope', 'scope', 520, 40, { inputCount: 2, timeSpan: 14, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'x and v'),
       node('meter', 'meter', 520, 292, { digits: 3 }, 'x'),
       node('stage', 'stage', 700, 140, { ...SCENE_MASS_SPRING }, 'Stage'),
@@ -151,26 +233,58 @@ export function oscillatorDocument(): SimDocument {
 export function pidDocument(): SimDocument {
   return {
     name: 'PID on second-order plant',
-    description: 'A PID drives the generic Second-Order plant to a unit step.',
-    config: { solver: 'rk4', stepSize: 0.002, stopTime: 12, startTime: 0, speed: 1 },
-    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
+    description:
+      'Second-order plant under PID with uncertain ωn/ζ/K, Stage hand disturbance, and Design-pane Bode/Nyquist campaigns.',
+    config: mcConfig({ stepSize: 0.002, stopTime: 12, mcCampaignSize: 2000 }),
+    design: designConfig({ Q: [25, 5, 0, 0, 0, 0], R: 0.5 }),
     nodes: [
-      node('note', 'note', 16, 8, { text: 'Plant is ÿ + 2ζωẏ + ω²y = K u with ωn = 2, ζ = 0.25, K = 1.' }),
+      node('note', 'note', 16, 8, {
+        text: 'Plant ÿ+2ζωẏ+ω²y=Ku with MC on ωn, ζ, K. Design → Analyze. Stage: Hand u / Kick / bump y.',
+      }),
       node('ref', 'step', 16, 128, { stepTime: 0.3, initialValue: 0, finalValue: 1 }, 'Reference'),
       node('sum', 'sum', 144, 121, { signs: '+-' }, 'Error'),
-      node('pid', 'pid', 260, 128, { Kp: 3.5, Ki: 4, Kd: 0.8, Tf: 0.05, limitOutput: true, upperLimit: 12, lowerLimit: -12 }, 'PID'),
-      node('plant', 'secondorder', 420, 119, { wn: 2, zeta: 0.25, K: 1, y0: 0, dy0: 0 }, 'Second-order'),
-      node('scope', 'scope', 600, 52, { inputCount: 2, timeSpan: 12, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'Ref & y'),
-      node('meter', 'meter', 600, 268, { digits: 3 }, 'y'),
+      node(
+        'pid',
+        'pid',
+        260,
+        128,
+        { Kp: 3.5, Ki: 4, Kd: 0.8, Tf: 0.05, limitOutput: true, upperLimit: 12, lowerLimit: -12 },
+        'PID'
+      ),
+      node('manual', 'manual', 260, 280, { value: 0, min: -3, max: 3 }, 'Hand u'),
+      node('kick', 'pulse', 260, 380, { amplitude: 2, delay: 1e9, width: 0.15, period: 0 }, 'Kick'),
+      node('sum-u', 'sum', 400, 140, { signs: '+++' }, 'Σ u'),
+      node(
+        'plant',
+        'secondorder',
+        540,
+        132,
+        { wn: 2, zeta: 0.25, K: 1, y0: 0, dy0: 0 },
+        'Second-order',
+        'plant',
+        {
+          wn: unc('percent', 3101, 12),
+          zeta: unc('percent', 3102, 25),
+          K: unc('percent', 3103, 8),
+        }
+      ),
+      node('scope', 'scope', 740, 40, { inputCount: 2, timeSpan: 12, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'Ref & y'),
+      node('meter', 'meter', 740, 268, { digits: 3 }, 'y'),
+      node('stage', 'stage', 900, 140, { ...SCENE_SECOND_ORDER }, 'Stage'),
     ],
     edges: [
       edge('ref', 'out', 'sum', 'in0'),
       edge('plant', 'y', 'sum', 'in1'),
       edge('sum', 'out', 'pid', 'in'),
-      edge('pid', 'out', 'plant', 'u'),
+      edge('pid', 'out', 'sum-u', 'in0'),
+      edge('manual', 'out', 'sum-u', 'in1'),
+      edge('kick', 'out', 'sum-u', 'in2'),
+      edge('sum-u', 'out', 'plant', 'u'),
       edge('ref', 'out', 'scope', 'in0'),
       edge('plant', 'y', 'scope', 'in1'),
       edge('plant', 'y', 'meter', 'in'),
+      edge('plant', 'y', 'stage', 'y'),
+      edge('sum-u', 'out', 'stage', 'u'),
     ],
   };
 }
@@ -178,24 +292,35 @@ export function pidDocument(): SimDocument {
 export function harmonicDocument(): SimDocument {
   return {
     name: 'Harmonic oscillator',
-    description: 'ÿ + ω²y = 0 with ω² = 4. Position starts at rest and velocity starts at 1.',
-    config: { solver: 'rk4', stepSize: 0.002, stopTime: 10, startTime: 0, speed: 1 },
-    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
+    description:
+      'Undamped second-order plant (ζ≈0) with Monte Carlo on ωn. Design → Analyze shows pole clouds; period ≈ π s at ωn=2.',
+    config: mcConfig({ stepSize: 0.002, stopTime: 10, mcCampaignSize: 1000 }),
+    design: designConfig({ Q: [10, 1, 0, 0, 0, 0], R: 1, opMode: 'x0' }),
     nodes: [
-      node('note', 'note', 16, 8, { text: 'Two integrators and a gain close the loop ÿ = −ω² y. Period is π seconds.' }),
-      node('v', 'integrator', 16, 112, { initialCondition: 1 }, 'velocity'),
-      node('y', 'integrator', 150, 112, { initialCondition: 0 }, 'position'),
-      node('stiff', 'gain', 16, 252, { k: -4 }, '−ω²'),
-      node('scope', 'scope', 300, 48, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: -1.2, yMax: 1.2 }, 'y and v'),
-      node('meter', 'meter', 300, 260, { digits: 3 }, 'y'),
+      node('note', 'note', 16, 8, {
+        text: 'Free response of ÿ+ωn²y=0 (ζ≈0, u=0). MC on ωn. Design → Analyze (op point = plant x₀) for ensemble poles.',
+      }),
+      node('u', 'constant', 16, 128, { value: 0 }, 'u = 0'),
+      node(
+        'plant',
+        'secondorder',
+        160,
+        120,
+        { wn: 2, zeta: 0.002, K: 1, y0: 0, dy0: 1 },
+        'Oscillator',
+        'plant',
+        {
+          wn: unc('percent', 4101, 8),
+        }
+      ),
+      node('scope', 'scope', 360, 48, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: -1.2, yMax: 1.2 }, 'y and ẏ'),
+      node('meter', 'meter', 360, 260, { digits: 3 }, 'y'),
     ],
     edges: [
-      edge('v', 'out', 'y', 'in'),
-      edge('y', 'out', 'stiff', 'in'),
-      edge('stiff', 'out', 'v', 'in'),
-      edge('y', 'out', 'scope', 'in0'),
-      edge('v', 'out', 'scope', 'in1'),
-      edge('y', 'out', 'meter', 'in'),
+      edge('u', 'out', 'plant', 'u'),
+      edge('plant', 'y', 'scope', 'in0'),
+      edge('plant', 'dy', 'scope', 'in1'),
+      edge('plant', 'y', 'meter', 'in'),
     ],
   };
 }
@@ -203,26 +328,54 @@ export function harmonicDocument(): SimDocument {
 export function motorDocument(): SimDocument {
   return {
     name: 'DC motor speed control',
-    description: 'Armature voltage steps; a PID regulates rotor speed on the DC Motor block.',
-    config: { solver: 'rk4', stepSize: 0.001, stopTime: 8, startTime: 0, speed: 1 },
-    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
+    description:
+      'DC motor under PID with Monte Carlo on R, J, b, Kt; Stage Va trim / load kick / spin nudges; Design campaigns for margins.',
+    config: mcConfig({ stepSize: 0.001, stopTime: 8, mcCampaignSize: 2000 }),
+    design: designConfig({ Q: [5, 20, 0, 0, 0, 0], R: 0.2 }),
     nodes: [
-      node('note', 'note', 16, 8, { text: 'Electrical + mechanical domains in one DC Motor building block. TL is a load disturbance.' }),
+      node('note', 'note', 16, 8, {
+        text: 'MC on R, J, b, Kt. Design → Analyze. Stage: Va trim, Load kick, Spin nudges. Auto load pulse at t=4 s.',
+      }),
       node('ref', 'step', 16, 120, { stepTime: 0.4, initialValue: 0, finalValue: 5 }, 'ω ref'),
       node('sum', 'sum', 150, 112, { signs: '+-' }, 'Error'),
-      node('pid', 'pid', 280, 120, { Kp: 8, Ki: 25, Kd: 0.2, Tf: 0.02, limitOutput: true, upperLimit: 48, lowerLimit: -48 }, 'PID'),
-      node('load', 'pulse', 280, 280, { amplitude: 0.05, delay: 4, width: 0.5, period: 0 }, 'Load pulse'),
-      node('motor', 'dcmotor', 460, 150, { R: 1, L: 0.05, Kt: 0.1, Kb: 0.1, J: 0.02, b: 0.05 }, 'DC motor'),
-      node('angle', 'integrator', 460, 280, { initialCondition: 0 }, 'θ = ∫ω'),
-      node('scope', 'scope', 680, 40, { inputCount: 2, timeSpan: 8, autoScale: true, yMin: -1, yMax: 6 }, 'Ref & ω'),
-      node('meter', 'meter', 680, 280, { digits: 3 }, 'ω'),
-      node('stage', 'stage', 860, 140, { ...SCENE_ROTOR }, 'Stage'),
+      node(
+        'pid',
+        'pid',
+        280,
+        120,
+        { Kp: 8, Ki: 25, Kd: 0.2, Tf: 0.02, limitOutput: true, upperLimit: 48, lowerLimit: -48 },
+        'PID'
+      ),
+      node('manual', 'manual', 150, 280, { value: 0, min: -12, max: 12 }, 'Va trim'),
+      node('sum-va', 'sum', 400, 120, { signs: '++' }, 'Σ Va'),
+      node('load', 'pulse', 400, 280, { amplitude: 0.05, delay: 4, width: 0.5, period: 0 }, 'Load pulse'),
+      node(
+        'motor',
+        'dcmotor',
+        560,
+        150,
+        { R: 1, L: 0.05, Kt: 0.1, Kb: 0.1, J: 0.02, b: 0.05 },
+        'DC motor',
+        'motor',
+        {
+          R: unc('percent', 5101, 10),
+          J: unc('percent', 5102, 15),
+          b: unc('percent', 5103, 20),
+          Kt: unc('percent', 5104, 8),
+        }
+      ),
+      node('angle', 'integrator', 560, 300, { initialCondition: 0 }, 'θ = ∫ω'),
+      node('scope', 'scope', 780, 40, { inputCount: 2, timeSpan: 8, autoScale: true, yMin: -1, yMax: 6 }, 'Ref & ω'),
+      node('meter', 'meter', 780, 280, { digits: 3 }, 'ω'),
+      node('stage', 'stage', 960, 140, { ...SCENE_ROTOR }, 'Stage'),
     ],
     edges: [
       edge('ref', 'out', 'sum', 'in0'),
       edge('motor', 'w', 'sum', 'in1'),
       edge('sum', 'out', 'pid', 'in'),
-      edge('pid', 'out', 'motor', 'Va'),
+      edge('pid', 'out', 'sum-va', 'in0'),
+      edge('manual', 'out', 'sum-va', 'in1'),
+      edge('sum-va', 'out', 'motor', 'Va'),
       edge('load', 'out', 'motor', 'TL'),
       edge('motor', 'w', 'angle', 'in'),
       edge('ref', 'out', 'scope', 'in0'),
@@ -230,6 +383,7 @@ export function motorDocument(): SimDocument {
       edge('motor', 'w', 'meter', 'in'),
       edge('angle', 'out', 'stage', 'theta'),
       edge('motor', 'T', 'stage', 'torque'),
+      edge('motor', 'w', 'stage', 'omega'),
     ],
   };
 }
@@ -237,24 +391,37 @@ export function motorDocument(): SimDocument {
 export function pneumaticDocument(): SimDocument {
   return {
     name: 'Pneumatic tank charge',
-    description: 'A valve from a supply pressure fills an isothermal tank. Opening steps at t = 0.5 s.',
-    config: { solver: 'rk4', stepSize: 0.002, stopTime: 10, startTime: 0, speed: 1 },
-    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
+    description:
+      'Valve + isothermal tank with MC on Cd and C; Stage valve trim / burp pulse; open Design for uncertainty campaigns.',
+    config: mcConfig({ stepSize: 0.002, stopTime: 10, mcCampaignSize: 1200 }),
+    design: designConfig({ Q: [10, 0, 0, 0, 0, 0], R: 1 }),
     nodes: [
-      node('note', 'note', 16, 8, { text: 'Pneumatic Valve + Tank. q = Cd·open·sign(Δp)·√|Δp|, C ṗ = q.' }),
+      node('note', 'note', 16, 8, {
+        text: 'MC on valve Cd and tank C. Stage: Valve trim + Burp. Design → Analyze uses the tank as the Dynamics plant when selected.',
+      }),
       node('supply', 'constant', 16, 120, { value: 5 }, 'Supply p'),
-      node('open', 'step', 16, 240, { stepTime: 0.5, initialValue: 0, finalValue: 1 }, 'Valve open'),
-      node('valve', 'pneumatic_valve', 200, 150, { Cd: 0.35 }, 'Valve'),
-      node('vent', 'constant', 200, 300, { value: 0 }, 'Vent q'),
-      node('tank', 'pneumatic_tank', 380, 160, { C: 0.05, p0: 1 }, 'Tank'),
-      node('scope', 'scope', 560, 48, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: 0, yMax: 5.5 }, 'p & q'),
-      node('meter', 'meter', 560, 280, { digits: 3 }, 'p'),
-      node('stage', 'stage', 740, 140, { ...SCENE_TANK }, 'Stage'),
+      node('open', 'step', 16, 240, { stepTime: 0.5, initialValue: 0, finalValue: 0.7 }, 'Valve open'),
+      node('manual', 'manual', 16, 360, { value: 0, min: 0, max: 1 }, 'Valve trim'),
+      node('burp', 'pulse', 200, 360, { amplitude: 0.35, delay: 1e9, width: 0.25, period: 0 }, 'Burp'),
+      node('sum-open', 'sum', 200, 240, { signs: '+++' }, 'Σ open'),
+      node('valve', 'pneumatic_valve', 360, 150, { Cd: 0.35 }, 'Valve', 'valve', {
+        Cd: unc('percent', 6101, 15),
+      }),
+      node('vent', 'constant', 360, 300, { value: 0 }, 'Vent q'),
+      node('tank', 'pneumatic_tank', 540, 160, { C: 0.05, p0: 1 }, 'Tank', 'tank', {
+        C: unc('percent', 6102, 12),
+      }),
+      node('scope', 'scope', 720, 48, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: 0, yMax: 5.5 }, 'p & q'),
+      node('meter', 'meter', 720, 280, { digits: 3 }, 'p'),
+      node('stage', 'stage', 900, 140, { ...SCENE_TANK }, 'Stage'),
     ],
     edges: [
       edge('supply', 'out', 'valve', 'p1'),
       edge('tank', 'p', 'valve', 'p2'),
-      edge('open', 'out', 'valve', 'open'),
+      edge('open', 'out', 'sum-open', 'in0'),
+      edge('manual', 'out', 'sum-open', 'in1'),
+      edge('burp', 'out', 'sum-open', 'in2'),
+      edge('sum-open', 'out', 'valve', 'open'),
       edge('valve', 'q', 'tank', 'qin'),
       edge('vent', 'out', 'tank', 'qout'),
       edge('tank', 'p', 'scope', 'in0'),
@@ -269,12 +436,12 @@ export function pneumaticDocument(): SimDocument {
 export function blankDocument(): SimDocument {
   return {
     name: 'Untitled',
-    description: 'Empty diagram.',
-    config: { ...DEFAULT_CONFIG, stopTime: 10 },
-    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
+    description: 'Empty diagram — add Dynamics blocks, enable MC distributions, then Design → Analyze.',
+    config: mcConfig({ stopTime: 10, mcCampaignSize: 500 }),
+    design: designConfig(),
     nodes: [
       node('note', 'note', 80, 80, {
-        text: 'Drag Dynamics blocks (ODE, Mass, Motor, Pneumatic…) to build a plant, then run.',
+        text: 'Drag Dynamics blocks to build a plant. On Properties, set parameter distributions. Design pane runs stability + MC campaigns; Stage binds control/disturbance as data.',
       }),
     ],
     edges: [],
@@ -292,37 +459,37 @@ export const EXAMPLES: ExampleTemplate[] = [
   {
     id: 'pendulum',
     name: 'Inverted double pendulum',
-    summary: 'Mass-matrix ODE plant with state feedback and an animated stage.',
+    summary: 'LQR ODE plant with MC uncertainty, Design campaigns, and Stage kicks.',
     create: pendulumDocument,
   },
   {
     id: 'motor',
     name: 'DC motor speed control',
-    summary: 'Electrical + mechanical motor block under PID speed control.',
+    summary: 'PID motor with MC on R/J/b/Kt and Stage Va trim / load kick.',
     create: motorDocument,
   },
   {
     id: 'pneumatic',
     name: 'Pneumatic tank charge',
-    summary: 'Valve and isothermal tank from the pneumatic domain library.',
+    summary: 'Valve + tank with MC on Cd/C and Stage valve trim.',
     create: pneumaticDocument,
   },
   {
     id: 'pid',
     name: 'PID on second-order plant',
-    summary: 'Generic second-order Dynamics block under PID control.',
+    summary: 'Uncertain second-order plant, Stage hand u, Design Bode/Nyquist.',
     create: pidDocument,
   },
   {
     id: 'oscillator',
     name: 'Mass-spring-damper',
-    summary: 'Mass, Spring, and Damper building blocks closing Newton’s law.',
+    summary: 'm/c/k Monte Carlo with Stage force / impulse.',
     create: oscillatorDocument,
   },
   {
     id: 'harmonic',
     name: 'Harmonic oscillator',
-    summary: 'An undamped second-order loop from integrators and a gain.',
+    summary: 'Uncertain −ω² gain — Design pole-cloud campaign.',
     create: harmonicDocument,
   },
 ];
@@ -335,6 +502,7 @@ export function documentGraph(doc: SimDocument): { nodes: GraphNode[]; edges: Gr
       blockType: item.blockType,
       role: item.role,
       parameters: { ...(def?.defaultParameters ?? {}), ...(item.parameters ?? {}) },
+      uncertainty: item.uncertainty,
     };
   });
   const edges: GraphEdge[] = doc.edges.map((item, index) => ({

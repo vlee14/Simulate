@@ -77,7 +77,16 @@ interface AppState {
   updatePositions: (nodes: Node[]) => void;
   addBlock: (blockType: string, position: { x: number; y: number }) => void;
   insertGraph: (
-    nodes: { id: string; blockType: string; x: number; y: number; parameters?: Record<string, Param>; alias?: string; role?: string }[],
+    nodes: {
+      id: string;
+      blockType: string;
+      x: number;
+      y: number;
+      parameters?: Record<string, Param>;
+      alias?: string;
+      role?: string;
+      uncertainty?: Record<string, ParamUncertainty>;
+    }[],
     edges: { source: string; sourceHandle: string; target: string; targetHandle: string }[]
   ) => void;
   connect: (connection: Connection | Edge) => void;
@@ -340,6 +349,7 @@ export const useStore = create<AppState>((set, get) => ({
           alias: item.alias ?? def.name,
           role: item.role,
           parameters: { ...def.defaultParameters, ...(item.parameters ?? {}) },
+          uncertainty: item.uncertainty ? { ...item.uncertainty } : undefined,
         } as NodeData,
       });
     }
