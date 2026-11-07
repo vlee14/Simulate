@@ -1,7 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { blankDocument, EXAMPLES } from '../model/examples';
 import { parseDocument } from '../model/library';
 import { SimDocument } from '../model/document';
+import { readShareFromLocation } from '../engine/exportShare';
 import { resetSim } from '../sim/controller';
 import { confirmClose, useStore } from '../store';
 
@@ -15,6 +16,18 @@ export const Home: React.FC = () => {
     resetSim();
     openModel(model, id);
   };
+
+  useEffect(() => {
+    try {
+      const shared = readShareFromLocation();
+      if (!shared) return;
+      const model = parseDocument(shared);
+      open(model, null);
+      history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    } catch {
+      /* App.tsx also tries; ignore here if already cleared */
+    }
+  }, []);
 
   const openFile = async (file: File) => {
     try {

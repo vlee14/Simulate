@@ -120,7 +120,11 @@ The platform organizes blocks into functional categories:
 | **Discrete** | Unit Delay (1/z), Discrete Filter, Zero-Order Hold | Model sampled-data systems, digital control, and DSP |
 | **Nonlinear / Routing** | Saturation, Dead Zone, Switch, Mux / Demux | Signal multiplexing, switching, and non-linear limits |
 
-Use **Plant builder** in the library to insert wired recipes (plant + actuators + sensors + Stage animation), or package the cart–pendulum recipe as one Subsystem block. Stage drawing is data-driven: an `inputs` port list plus a JSON `scene` of boxes, links, disks, tanks, pistons, and spring–masses (recipes ship ready-made scene presets).
+Use **Plant builder** in the library to insert wired recipes (plant + actuators + sensors + Stage animation), or package the cart–pendulum recipe as one Subsystem block. Stage drawing is data-driven: an `inputs` port list plus a JSON `scene` of boxes, links, disks, tanks, pistons, and spring–masses. Stage also binds a **user control** (`control` → Manual block), **disturbances** (pulse kicks / state nudges), and **canvas interactions** (drag for force, click links/boxes to tip) — all as parameter strings, no demo-specific UI code.
+
+The **Design** pane linearizes a Dynamics plant about a chosen operating point (equilibrium, plant x₀, live state, or a custom breakpoint), then runs selectable stability reports — eigenvalues, controllability, damping/ωₙ, gain/phase margins, pole map, **Bode**, **Nyquist**, **Nichols**, and **root locus** — and can apply LQR onto gain roles `k0…` / `kref`.
+
+**Monte Carlo**: numeric plant/sensor/actuator parameters can each carry a distribution (normal, uniform, percent, lognormal). Enabling a distribution assigns a stable per-parameter seed, so the same simulation run index always redraws the same value for that parameter even if other blocks are added or removed. **Run 0** is always the nominal (typed) values. Campaign size is sized statistically: proxy output CV from the RSS of per-parameter relative σ, then CLT mean N=(z·CV/ε)², tail/quantile binomial + order-stat floors, and Saltelli screening N=M(2p+2).
 
 ---
 

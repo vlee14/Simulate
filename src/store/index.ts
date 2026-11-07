@@ -2,17 +2,40 @@ import create from 'zustand';
 import { addEdge, Connection, Edge, Elements, Node } from 'react-flow-renderer';
 import { v4 as uuid } from 'uuid';
 import { getBlock } from '../engine/blocks';
-import { DesignConfig, Param, SimConfig } from '../engine/types';
+import { AnalysisOption, DesignConfig, DistKind, LinearizationPoint, Param, ParamUncertainty, SimConfig } from '../engine/types';
+import { newUncertaintySeed } from '../engine/montecarlo';
 import { formatPole } from '../engine/lqr';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, SimDocument } from '../model/document';
 import { edgeDefaults, isEdge, NodeData, toDocument, toElements } from '../model/elements';
 import { LibraryEntry, loadLibrary, persistLibrary } from '../model/library';
+import type { ExperimentResult } from '../engine/experiments';
+import type { CampaignProgress } from '../engine/mcCampaignRunner';
+import type { McCampaignStats, McRunSample } from '../engine/mcStats';
+import type { SensitivityReport } from '../engine/sensitivity';
+import type { StabilityReport } from '../engine/stability';
+import { historyStack, DocSnapshot } from '../sim/history';
 
 export interface DesignView {
   summary: string;
   open: string[];
   closed: string[];
   gains: { id: string; value: number }[];
+  opLabel?: string;
+  /** Report for the currently selected MC run (0 = nominal). */
+  report?: StabilityReport | null;
+  /** Always the run-0 (nominal plant) stability report for plot overlays. */
+  nominalReport?: StabilityReport | null;
+  /** Monte Carlo ensemble traces (runs ≥ 1) drawn in grey behind nominal. */
+  mcEnsemble?: { run: number; report: StabilityReport }[];
+  /** Which MC run the detail report / amber highlight refers to. */
+  selectedRun?: number;
+  /** Large-N campaign aggregates (percentile bands, pole cloud, …). */
+  mcCampaign?: McCampaignStats | null;
+  /** Raw campaign samples (for selecting runs outside the overlay set). */
+  mcSamples?: McRunSample[] | null;
+  mcCampaignWs?: number[] | null;
+  /** Live campaign progress (bar + ETA). */
+  mcCampaignProgress?: CampaignProgress | null;
 }
 
 interface AppState {
@@ -42,17 +65,31 @@ interface AppState {
   setConfig: (patch: Partial<SimConfig>) => void;
   setDesignWeight: (index: number, value: number) => void;
   setDesignR: (value: number) => void;
+  setDesignOpMode: (mode: LinearizationPoint) => void;
+  setDesignOp: (patch: { xOp?: string; uOp?: string }) => void;
+  setDesignAnalysis: (option: AnalysisOption, enabled: boolean) => void;
   setDesignView: (view: DesignView | null) => void;
   setSelected: (ids: string[]) => void;
   setStatus: (status: AppState['status'], message?: string, errorIds?: string[]) => void;
   setTime: (time: number, rate?: number) => void;
   updateParam: (id: string, key: string, value: Param) => void;
+  /** Set / clear a parameter’s Monte Carlo distribution. Seed is assigned once and kept. */
+  updateUncertainty: (id: string, key: string, patch: { kind: DistKind; spread?: number } | null) => void;
   updateAlias: (id: string, alias: string) => void;
   updatePosition: (id: string, x: number, y: number) => void;
   updatePositions: (nodes: Node[]) => void;
   addBlock: (blockType: string, position: { x: number; y: number }) => void;
   insertGraph: (
-    nodes: { id: string; blockType: string; x: number; y: number; parameters?: Record<string, Param>; alias?: string; role?: string }[],
+    nodes: {
+      id: string;
+      blockType: string;
+      x: number;
+      y: number;
+      parameters?: Record<string, Param>;
+      alias?: string;
+      role?: string;
+      uncertainty?: Record<string, ParamUncertainty>;
+    }[],
     edges: { source: string; sourceHandle: string; target: string; targetHandle: string }[]
   ) => void;
   connect: (connection: Connection | Edge) => void;
@@ -60,6 +97,32 @@ interface AppState {
   setAnimated: (animated: boolean) => void;
   applyGain: (id: string, value: number) => void;
   document: () => ReturnType<typeof toDocument>;
+  /** Push current doc onto the undo stack (call before a batch of edits). */
+  checkpoint: () => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  experimentResult: ExperimentResult | null;
+  sensitivityResult: SensitivityReport | null;
+  setExperimentResult: (result: ExperimentResult | null) => void;
+  setSensitivityResult: (result: SensitivityReport | null) => void;
+}
+
+function snapFrom(state: {
+  elements: Elements;
+  name: string;
+  description: string;
+  config: SimConfig;
+  design: DesignConfig;
+}): DocSnapshot {
+  return {
+    elements: state.elements,
+    name: state.name,
+    description: state.description,
+    config: state.config,
+    design: state.design,
+  };
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -72,7 +135,14 @@ export const useStore = create<AppState>((set, get) => ({
   name: 'Untitled',
   description: '',
   config: { ...DEFAULT_CONFIG },
-  design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+  design: {
+    Q: DEFAULT_DESIGN.Q.slice(),
+    R: DEFAULT_DESIGN.R,
+    opMode: DEFAULT_DESIGN.opMode,
+    xOp: DEFAULT_DESIGN.xOp,
+    uOp: DEFAULT_DESIGN.uOp,
+    analysis: DEFAULT_DESIGN.analysis.slice(),
+  },
   designView: null,
   selectedIds: [],
   status: 'idle',
@@ -80,8 +150,13 @@ export const useStore = create<AppState>((set, get) => ({
   rate: 0,
   message: 'Ready',
   errorIds: [],
+  canUndo: false,
+  canRedo: false,
+  experimentResult: null,
+  sensitivityResult: null,
 
   openModel: (model, documentId) => {
+    historyStack.clear();
     set((state) => ({
       view: 'editor',
       documentId,
@@ -94,6 +169,10 @@ export const useStore = create<AppState>((set, get) => ({
       design: {
         Q: (model.design?.Q ?? DEFAULT_DESIGN.Q).slice(),
         R: model.design?.R ?? DEFAULT_DESIGN.R,
+        opMode: model.design?.opMode ?? DEFAULT_DESIGN.opMode,
+        xOp: model.design?.xOp ?? DEFAULT_DESIGN.xOp,
+        uOp: model.design?.uOp ?? DEFAULT_DESIGN.uOp,
+        analysis: (model.design?.analysis ?? DEFAULT_DESIGN.analysis).slice(),
       },
       designView: null,
       selectedIds: [],
@@ -102,6 +181,10 @@ export const useStore = create<AppState>((set, get) => ({
       rate: 0,
       message: model.name,
       errorIds: [],
+      canUndo: false,
+      canRedo: false,
+      experimentResult: null,
+      sensitivityResult: null,
     }));
   },
 
@@ -166,6 +249,29 @@ export const useStore = create<AppState>((set, get) => ({
 
   setDesignR: (value) => set((state) => ({ design: { ...state.design, R: value }, dirty: true })),
 
+  setDesignOpMode: (opMode) => set((state) => ({ design: { ...state.design, opMode }, dirty: true })),
+
+  setDesignOp: (patch) =>
+    set((state) => ({
+      design: {
+        ...state.design,
+        xOp: patch.xOp ?? state.design.xOp,
+        uOp: patch.uOp ?? state.design.uOp,
+      },
+      dirty: true,
+    })),
+
+  setDesignAnalysis: (option, enabled) =>
+    set((state) => {
+      const setOpts = new Set(state.design.analysis);
+      if (enabled) setOpts.add(option);
+      else setOpts.delete(option);
+      const order = DEFAULT_DESIGN.analysis;
+      const analysis = order.filter((id) => setOpts.has(id));
+      for (const id of setOpts) if (!analysis.includes(id)) analysis.push(id);
+      return { design: { ...state.design, analysis }, dirty: true };
+    }),
+
   setDesignView: (designView) => set({ designView }),
 
   setSelected: (selectedIds) => set({ selectedIds }),
@@ -188,6 +294,34 @@ export const useStore = create<AppState>((set, get) => ({
           ...element,
           data: { ...data, parameters: { ...data.parameters, [key]: value } },
         };
+      }),
+      dirty: true,
+    })),
+
+  updateUncertainty: (id, key, patch) =>
+    set((state) => ({
+      elements: state.elements.map((element) => {
+        if (isEdge(element) || element.id !== id) return element;
+        const data = element.data as NodeData;
+        const current = { ...(data.uncertainty ?? {}) };
+        if (!patch || patch.kind === 'none') {
+          delete current[key];
+          return {
+            ...element,
+            data: {
+              ...data,
+              uncertainty: Object.keys(current).length ? current : undefined,
+            },
+          };
+        }
+        const prev = current[key];
+        const next: ParamUncertainty = {
+          kind: patch.kind,
+          seed: prev?.seed ?? newUncertaintySeed(),
+          spread: patch.spread ?? prev?.spread ?? defaultSpread(patch.kind),
+        };
+        current[key] = next;
+        return { ...element, data: { ...data, uncertainty: current } };
       }),
       dirty: true,
     })),
@@ -223,6 +357,7 @@ export const useStore = create<AppState>((set, get) => ({
   addBlock: (blockType, position) => {
     const def = getBlock(blockType);
     if (!def) return;
+    get().checkpoint();
     const node: Node = {
       id: uuid(),
       type: def.renderer,
@@ -237,6 +372,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   insertGraph: (nodes, edges) => {
+    get().checkpoint();
     const idMap = new Map<string, string>();
     const created: Node[] = [];
     for (const item of nodes) {
@@ -253,6 +389,7 @@ export const useStore = create<AppState>((set, get) => ({
           alias: item.alias ?? def.name,
           role: item.role,
           parameters: { ...def.defaultParameters, ...(item.parameters ?? {}) },
+          uncertainty: item.uncertainty ? { ...item.uncertainty } : undefined,
         } as NodeData,
       });
     }
@@ -281,6 +418,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   connect: (connection) => {
     if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return;
+    get().checkpoint();
     set((state) => {
       const sourceNode = state.elements.find((element) => !isEdge(element) && element.id === connection.source);
       const targetNode = state.elements.find((element) => !isEdge(element) && element.id === connection.target);
@@ -324,6 +462,8 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   removeIds: (ids) => {
+    if (!ids.length) return;
+    get().checkpoint();
     const drop = new Set(ids);
     set((state) => ({
       elements: state.elements.filter((element) => {
@@ -341,7 +481,8 @@ export const useStore = create<AppState>((set, get) => ({
       elements: state.elements.map((element) => (isEdge(element) ? { ...element, animated } : element)),
     })),
 
-  applyGain: (id, value) =>
+  applyGain: (id, value) => {
+    get().checkpoint();
     set((state) => ({
       elements: state.elements.map((element) => {
         if (isEdge(element) || element.id !== id) return element;
@@ -349,12 +490,55 @@ export const useStore = create<AppState>((set, get) => ({
         return { ...element, data: { ...data, parameters: { ...data.parameters, k: value } } };
       }),
       dirty: true,
-    })),
+    }));
+  },
 
   document: () => {
     const state = get();
     return toDocument(state.elements, { name: state.name, description: state.description }, state.config, state.design);
   },
+
+  checkpoint: () => {
+    historyStack.push(snapFrom(get()));
+    set({ canUndo: historyStack.canUndo, canRedo: historyStack.canRedo });
+  },
+
+  undo: () => {
+    const state = get();
+    const prev = historyStack.undo(snapFrom(state));
+    if (!prev) return;
+    set({
+      elements: prev.elements,
+      name: prev.name,
+      description: prev.description,
+      config: prev.config,
+      design: prev.design,
+      dirty: true,
+      canUndo: historyStack.canUndo,
+      canRedo: historyStack.canRedo,
+      message: 'Undo',
+    });
+  },
+
+  redo: () => {
+    const state = get();
+    const next = historyStack.redo(snapFrom(state));
+    if (!next) return;
+    set({
+      elements: next.elements,
+      name: next.name,
+      description: next.description,
+      config: next.config,
+      design: next.design,
+      dirty: true,
+      canUndo: historyStack.canUndo,
+      canRedo: historyStack.canRedo,
+      message: 'Redo',
+    });
+  },
+
+  setExperimentResult: (experimentResult) => set({ experimentResult }),
+  setSensitivityResult: (sensitivityResult) => set({ sensitivityResult }),
 }));
 
 export function confirmClose(): boolean {
@@ -367,4 +551,19 @@ export function describePoles(poles: { real: number; imag: number }[]): string[]
   return [...poles]
     .sort((a, b) => b.real - a.real)
     .map((pole) => formatPole(pole));
+}
+
+function defaultSpread(kind: DistKind): number {
+  switch (kind) {
+    case 'percent':
+      return 5;
+    case 'lognormal':
+      return 0.1;
+    case 'uniform':
+      return 0.1;
+    case 'normal':
+      return 0.1;
+    default:
+      return 0;
+  }
 }
