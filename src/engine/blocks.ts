@@ -1,6 +1,7 @@
 import { DOMAIN_BLOCKS, domainSummary } from './domains';
 import { compileExpression, expressionInputCount } from './expr';
 import { IO_BLOCKS, ioSummary } from './io';
+import { zeros } from './linalg';
 import { BlockContext, BlockDefinition, Param, ParamSpec, PortDef } from './types';
 
 function num(p: Record<string, Param>, key: string, fallback = 0): number {
@@ -652,6 +653,208 @@ export const BLOCKS: BlockDefinition[] = [
     },
   },
   {
+    type: 'observer',
+    category: 'Continuous',
+    name: 'Observer',
+    description: 'Luenberger observer: ẋ̂ = A x̂ + B u + L (y − C x̂). Outputs estimated states.',
+    renderer: 'sim',
+    defaultParameters: {
+      A: '0 1; -2 -0.8',
+      B: '0; 1',
+      C: '1 0',
+      D: '0',
+      L: '1.6; 1.2',
+      x0: '0 0',
+    },
+    parameters: [
+      { key: 'A', label: 'A', type: 'string', wide: true, group: 'Model' },
+      { key: 'B', label: 'B', type: 'string', wide: true, group: 'Model' },
+      { key: 'C', label: 'C', type: 'string', wide: true, group: 'Model' },
+      { key: 'D', label: 'D', type: 'string', wide: true, group: 'Model' },
+      { key: 'L', label: 'L (observer gain)', type: 'string', wide: true, group: 'Model', help: 'Column n×p (or n×1)' },
+      { key: 'x0', label: 'x̂(0)', type: 'string', wide: true, group: 'Model' },
+    ],
+    hasDirectFeedthrough: () => false,
+    ports: (p) => {
+      try {
+        const ss = ssOf(p);
+        const L = matrix(text(p, 'L', '1; 0'));
+        const pY = L[0]?.length ?? 1;
+        return {
+          inputs: [
+            ...Array.from({ length: Math.max(1, pY) }, (_, i) => ({ id: `y${i}`, name: pY === 1 ? 'y' : `y${i + 1}` })),
+            ...Array.from({ length: ss.m }, (_, i) => ({ id: `u${i}`, name: ss.m === 1 ? 'u' : `u${i + 1}` })),
+          ],
+          outputs: Array.from({ length: ss.n }, (_, i) => ({ id: `x${i}`, name: `x̂${i + 1}` })),
+        };
+      } catch {
+        return { inputs: [{ id: 'y0', name: 'y' }, { id: 'u0', name: 'u' }], outputs: [{ id: 'x0', name: 'x̂1' }] };
+      }
+    },
+    continuousStates: (p) => {
+      try {
+        return ssOf(p).n;
+      } catch {
+        return 2;
+      }
+    },
+    discreteStates: none,
+    init: (ctx) => {
+      try {
+        const ss = ssOf(ctx.parameters);
+        const x0 = text(ctx.parameters, 'x0', '')
+          .trim()
+          .split(/[\s,]+/)
+          .filter(Boolean)
+          .map(Number);
+        for (let i = 0; i < ss.n; i++) ctx.state[i] = Number.isFinite(x0[i]) ? x0[i] : 0;
+      } catch {
+        /* keep zeros */
+      }
+    },
+    outputs: (ctx) => {
+      for (let i = 0; i < ctx.state.length; i++) ctx.outputs[`x${i}`] = ctx.state[i];
+    },
+    derivatives: (ctx) => {
+      const ss = ssOf(ctx.parameters);
+      const L = matrix(text(ctx.parameters, 'L', '1; 0'));
+      const pY = L[0]?.length ?? 1;
+      const yerr = new Array(pY).fill(0);
+      for (let i = 0; i < pY; i++) {
+        let yhat = 0;
+        for (let j = 0; j < ss.n; j++) yhat += (ss.C[i]?.[j] ?? (i === 0 && j === 0 ? 1 : 0)) * ctx.state[j];
+        yerr[i] = (ctx.inputs[`y${i}`] ?? 0) - yhat;
+      }
+      for (let i = 0; i < ss.n; i++) {
+        let dx = 0;
+        for (let j = 0; j < ss.n; j++) dx += ss.A[i][j] * ctx.state[j];
+        for (let j = 0; j < ss.m; j++) dx += (ss.B[i]?.[j] ?? 0) * (ctx.inputs[`u${j}`] ?? 0);
+        for (let j = 0; j < pY; j++) dx += (L[i]?.[j] ?? 0) * yerr[j];
+        ctx.deriv[i] = dx;
+      }
+    },
+  },
+  {
+    type: 'kalman',
+    category: 'Discrete',
+    name: 'Kalman',
+    description: 'Discrete linear Kalman filter for ẋ=Ax+Bu, y=Cx (+ process/measure noise). Sample time required.',
+    renderer: 'sim',
+    defaultParameters: {
+      A: '1 0.02; 0 0.98',
+      B: '0; 0.02',
+      C: '1 0',
+      D: '0',
+      Q: '1e-4 0; 0 1e-3',
+      R: '1e-3',
+      x0: '0 0',
+      sampleTime: 0.02,
+    },
+    parameters: [
+      { key: 'A', label: 'A (discrete)', type: 'string', wide: true, group: 'Model' },
+      { key: 'B', label: 'B', type: 'string', wide: true, group: 'Model' },
+      { key: 'C', label: 'C', type: 'string', wide: true, group: 'Model' },
+      { key: 'D', label: 'D', type: 'string', wide: true, group: 'Model' },
+      { key: 'Q', label: 'Q process', type: 'string', wide: true, group: 'Noise' },
+      { key: 'R', label: 'R measure', type: 'string', wide: true, group: 'Noise' },
+      { key: 'x0', label: 'x̂(0)', type: 'string', wide: true, group: 'Model' },
+      numberField('sampleTime', 'Sample time', 'Timing', 0.001),
+    ],
+    hasDirectFeedthrough: () => false,
+    ports: (p) => {
+      try {
+        const ss = ssOf(p);
+        return {
+          inputs: [
+            { id: 'y0', name: 'y' },
+            ...Array.from({ length: ss.m }, (_, i) => ({ id: `u${i}`, name: ss.m === 1 ? 'u' : `u${i + 1}` })),
+          ],
+          outputs: Array.from({ length: ss.n }, (_, i) => ({ id: `x${i}`, name: `x̂${i + 1}` })),
+        };
+      } catch {
+        return { inputs: [{ id: 'y0', name: 'y' }, { id: 'u0', name: 'u' }], outputs: [{ id: 'x0', name: 'x̂1' }] };
+      }
+    },
+    continuousStates: none,
+    discreteStates: (p) => {
+      try {
+        // xhat (n) + packed P (n*n)
+        const n = ssOf(p).n;
+        return n + n * n;
+      } catch {
+        return 2 + 4;
+      }
+    },
+    init: (ctx) => {
+      try {
+        const ss = ssOf(ctx.parameters);
+        const n = ss.n;
+        const x0 = text(ctx.parameters, 'x0', '')
+          .trim()
+          .split(/[\s,]+/)
+          .filter(Boolean)
+          .map(Number);
+        for (let i = 0; i < n; i++) ctx.discrete[i] = Number.isFinite(x0[i]) ? x0[i] : 0;
+        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) ctx.discrete[n + i * n + j] = i === j ? 1 : 0;
+      } catch {
+        /* zeros */
+      }
+    },
+    outputs: (ctx) => {
+      try {
+        const n = ssOf(ctx.parameters).n;
+        for (let i = 0; i < n; i++) ctx.outputs[`x${i}`] = ctx.discrete[i];
+      } catch {
+        ctx.outputs.x0 = ctx.discrete[0] ?? 0;
+      }
+    },
+    updateDiscrete: (ctx) => {
+      const ss = ssOf(ctx.parameters);
+      const n = ss.n;
+      const Q = matrix(text(ctx.parameters, 'Q', '1e-4 0; 0 1e-3'));
+      const Rmat = matrix(text(ctx.parameters, 'R', '1e-3'));
+      const x = Array.from({ length: n }, (_, i) => ctx.discrete[i]);
+      const P = zeros(n);
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) P[i][j] = ctx.discrete[n + i * n + j];
+      // Predict
+      const xPred = new Array(n).fill(0);
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) xPred[i] += ss.A[i][j] * x[j];
+        for (let j = 0; j < ss.m; j++) xPred[i] += (ss.B[i]?.[j] ?? 0) * (ctx.inputs[`u${j}`] ?? 0);
+      }
+      const Ppred = zeros(n);
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          let s = Q[i]?.[j] ?? (i === j ? 1e-4 : 0);
+          for (let k = 0; k < n; k++) for (let l = 0; l < n; l++) s += ss.A[i][k] * P[k][l] * ss.A[j][l];
+          Ppred[i][j] = s;
+        }
+      }
+      // Update (SISO y)
+      const C0 = ss.C[0] ?? new Array(n).fill(0).map((_, j) => (j === 0 ? 1 : 0));
+      let S = Rmat[0]?.[0] ?? 1e-3;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) S += C0[i] * Ppred[i][j] * C0[j];
+      const K = new Array(n).fill(0);
+      for (let i = 0; i < n; i++) {
+        let s = 0;
+        for (let j = 0; j < n; j++) s += Ppred[i][j] * C0[j];
+        K[i] = s / (S || 1e-12);
+      }
+      let yhat = 0;
+      for (let j = 0; j < n; j++) yhat += C0[j] * xPred[j];
+      const innov = (ctx.inputs.y0 ?? 0) - yhat;
+      for (let i = 0; i < n; i++) ctx.discrete[i] = xPred[i] + K[i] * innov;
+      // Joseph form lite: (I−KC)P
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          let s = Ppred[i][j];
+          for (let k = 0; k < n; k++) s -= K[i] * C0[k] * Ppred[k][j];
+          ctx.discrete[n + i * n + j] = s;
+        }
+      }
+    },
+  },
+  {
     type: 'statespace',
     category: 'Continuous',
     name: 'State-Space',
@@ -1030,6 +1233,10 @@ export function blockSummary(def: BlockDefinition, parameters: Record<string, Pa
       return `x₀ ${formatCompact(num(parameters, 'initialCondition', 0))}`;
     case 'pid':
       return `${formatCompact(num(parameters, 'Kp', 0))}  ${formatCompact(num(parameters, 'Ki', 0))}  ${formatCompact(num(parameters, 'Kd', 0))}`;
+    case 'observer':
+      return 'Luenberger';
+    case 'kalman':
+      return `Ts ${formatCompact(num(parameters, 'sampleTime', 0.02))}`;
     case 'transfer':
       return text(parameters, 'denominator', '');
     case 'sine':

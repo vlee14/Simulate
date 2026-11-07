@@ -4,6 +4,8 @@ import { Home } from './components/Home';
 import { Inspector } from './components/Inspector';
 import { Library } from './components/Library';
 import { Toolbar } from './components/Toolbar';
+import { parseDocument } from './model/library';
+import { readShareFromLocation } from './engine/exportShare';
 import { installSimulation, resetSim, toggleRun } from './sim/controller';
 import { useStore } from './store';
 import { COMPACT_LAYOUT, useMediaQuery } from './ui';
@@ -23,6 +25,23 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    // Load shared model from #model=… once on boot
+    try {
+      const shared = readShareFromLocation();
+      if (shared) {
+        const model = parseDocument(shared);
+        resetSim();
+        useStore.getState().openModel(model, null);
+        useStore.getState().setStatus('idle', `Opened shared model “${model.name}”`);
+        history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not open shared model';
+      useStore.getState().setStatus('error', message);
+    }
+  }, []);
+
+  useEffect(() => {
     installSimulation();
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -31,6 +50,17 @@ const App: React.FC = () => {
       if ((event.key === ' ' || event.code === 'Space') && useStore.getState().view === 'editor') {
         event.preventDefault();
         toggleRun();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) useStore.getState().redo();
+        else useStore.getState().undo();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        useStore.getState().redo();
+        return;
       }
       if (useStore.getState().view === 'editor' && (event.key === 'Delete' || event.key === 'Backspace')) {
         event.preventDefault();

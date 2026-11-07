@@ -1,9 +1,12 @@
 import { getBlock } from '../engine/blocks';
 import { structureSignature, SimCompileError } from '../engine/compile';
+import { runExperiment, ExperimentKind } from '../engine/experiments';
 import { designDynamicsLqr } from '../engine/lqr';
 import { linearizeBlock } from '../engine/linearize';
 import { runMcCampaign, sampleToFreqPoints } from '../engine/mcCampaignRunner';
 import { applyMonteCarlo, countUncertainParams, recommendMcRuns } from '../engine/montecarlo';
+import { runSensitivity } from '../engine/sensitivity';
+import { parsePoleList, placePolesSiso, tunePidImc, tunePidZn } from '../engine/synthesis';
 import {
   clampCampaignSize,
   freqFlatToPoints,
@@ -680,9 +683,29 @@ export function analyzeController(): void {
  * Optional role `kref` receives +K₀ for reference feedforward on the first state.
  * Linearizes about the Design-pane operating point.
  */
+function writeStateFeedbackGains(K: number[]): { id: string; value: number }[] {
+  const graph = graphNow();
+  const appliedGains: { id: string; value: number }[] = [];
+  const store = useStore.getState();
+  store.checkpoint();
+  K.forEach((value, index) => {
+    const role = `k${index}`;
+    const node = graph.nodes.find((item) => item.id === role || item.role === role);
+    if (!node || node.blockType !== 'gain') return;
+    const next = -value;
+    store.updateParam(node.id, 'k', next);
+    appliedGains.push({ id: role, value: next });
+  });
+  const refNode = graph.nodes.find((item) => item.id === 'kref' || item.role === 'kref');
+  if (refNode && refNode.blockType === 'gain' && K.length) {
+    store.updateParam(refNode.id, 'k', K[0]);
+    appliedGains.push({ id: 'kref', value: K[0] });
+  }
+  return appliedGains;
+}
+
 export function computeLqr(): void {
   const state = useStore.getState();
-  const graph = graphNow();
   const plant = findDesignPlant();
   if (!plant) {
     state.setStatus(state.status, 'Select a Dynamics plant (ODE, State-Space, …) to design a controller.');
@@ -691,23 +714,8 @@ export function computeLqr(): void {
   try {
     const op = resolveOperatingPoint(plant, state.design);
     const result = designDynamicsLqr(plant.blockType, plant.parameters, state.design.Q, state.design.R, op.x, op.u);
-    const appliedGains: { id: string; value: number }[] = [];
-    let applied = 0;
-    result.K.forEach((value, index) => {
-      const role = `k${index}`;
-      const node = graph.nodes.find((item) => item.id === role || item.role === role);
-      if (!node || node.blockType !== 'gain') return;
-      const next = -value;
-      useStore.getState().applyGain(node.id, next);
-      appliedGains.push({ id: role, value: next });
-      applied++;
-    });
-    const refNode = graph.nodes.find((item) => item.id === 'kref' || item.role === 'kref');
-    if (refNode && refNode.blockType === 'gain' && result.K.length) {
-      useStore.getState().applyGain(refNode.id, result.K[0]);
-      appliedGains.push({ id: 'kref', value: result.K[0] });
-      applied++;
-    }
+    const appliedGains = writeStateFeedbackGains(result.K);
+    const applied = appliedGains.length;
     const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
     const B1 = B.map((row) => [row[0] ?? 0]);
     publishDesignView({
@@ -730,5 +738,119 @@ export function computeLqr(): void {
     const message = error instanceof Error ? error.message : 'LQR failed';
     useStore.getState().setDesignView(null);
     useStore.getState().setStatus(useStore.getState().status, message);
+  }
+}
+
+/** Place closed-loop poles via Ackermann and write k0… / kref. */
+export function placeControllerPoles(poleText: string): void {
+  const state = useStore.getState();
+  const plant = findDesignPlant();
+  if (!plant) {
+    state.setStatus(state.status, 'Select a Dynamics plant to place poles.');
+    return;
+  }
+  try {
+    const poles = parsePoleList(poleText);
+    const op = resolveOperatingPoint(plant, state.design);
+    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
+    const B1 = B.map((row) => [row[0] ?? 0]);
+    const result = placePolesSiso(A, B1, poles);
+    const appliedGains = writeStateFeedbackGains(result.K);
+    publishDesignView({
+      summary: `${result.note} Applied ${appliedGains.length} gain${appliedGains.length === 1 ? '' : 's'}.`,
+      plant,
+      K: result.K,
+      appliedGains,
+      opLabel: op.label,
+      A,
+      B: B1,
+    });
+    useStore.getState().setStatus('idle', `Pole placement done · ${result.polesClosed.length} closed-loop poles`);
+  } catch (error) {
+    useStore.getState().setStatus(useStore.getState().status, error instanceof Error ? error.message : 'Pole placement failed');
+  }
+}
+
+/** Auto-tune the first PID block (IMC or Ziegler–Nichols from the selected plant). */
+export function tunePid(method: 'imc' | 'zn' = 'imc'): void {
+  const state = useStore.getState();
+  const plant = findDesignPlant();
+  const graph = graphNow();
+  const pid = graph.nodes.find((n) => n.blockType === 'pid');
+  if (!plant) {
+    state.setStatus(state.status, 'Select a Dynamics plant to tune against.');
+    return;
+  }
+  if (!pid) {
+    state.setStatus(state.status, 'Add a PID block to receive tuned gains.');
+    return;
+  }
+  try {
+    const op = resolveOperatingPoint(plant, state.design);
+    const gains =
+      method === 'zn'
+        ? tunePidZn(plant.blockType, plant.parameters, { x0: op.x, u0: op.u })
+        : tunePidImc(plant.blockType, plant.parameters, { x0: op.x, u0: op.u });
+    state.checkpoint();
+    state.updateParam(pid.id, 'Kp', gains.Kp);
+    state.updateParam(pid.id, 'Ki', gains.Ki);
+    state.updateParam(pid.id, 'Kd', gains.Kd);
+    state.updateParam(pid.id, 'Tf', gains.Tf);
+    state.setStatus('idle', gains.note);
+  } catch (error) {
+    state.setStatus(state.status, error instanceof Error ? error.message : 'PID tune failed');
+  }
+}
+
+/** Run a time-domain step/impulse experiment with optional MC envelopes. */
+export function runTimeExperiment(args: {
+  kind: ExperimentKind;
+  outputBlock: string;
+  outputPort: string;
+  inputBlock?: string;
+  mcRuns?: number;
+}): void {
+  const state = useStore.getState();
+  try {
+    const graph = graphNow();
+    const result = runExperiment(graph.nodes, graph.edges, state.config, {
+      kind: args.kind,
+      outputBlock: args.outputBlock,
+      outputPort: args.outputPort,
+      inputBlock: args.inputBlock,
+      stopTime: state.config.stopTime || 10,
+      stepSize: state.config.stepSize || 0.002,
+      mcRuns: args.mcRuns ?? Math.min(64, state.config.mcCampaignSize ?? 32),
+    });
+    state.setExperimentResult(result);
+    state.setStatus('idle', result.summary[0] ?? 'Experiment done');
+  } catch (error) {
+    state.setExperimentResult(null);
+    state.setStatus(state.status, error instanceof Error ? error.message : 'Experiment failed');
+  }
+}
+
+/** Parameter tornado + first-order sensitivity + 1D sweep. */
+export function runSensitivityStudy(args: {
+  outputBlock: string;
+  outputPort: string;
+  inputBlock?: string;
+  metric?: 'riseTime' | 'settlingTime' | 'overshoot' | 'peak';
+}): void {
+  const state = useStore.getState();
+  try {
+    const graph = graphNow();
+    const report = runSensitivity(graph.nodes, graph.edges, state.config, {
+      outputBlock: args.outputBlock,
+      outputPort: args.outputPort,
+      inputBlock: args.inputBlock,
+      kind: 'step',
+      metric: args.metric ?? 'settlingTime',
+    });
+    state.setSensitivityResult(report);
+    state.setStatus('idle', report.summary[0] ?? 'Sensitivity done');
+  } catch (error) {
+    state.setSensitivityResult(null);
+    state.setStatus(state.status, error instanceof Error ? error.message : 'Sensitivity failed');
   }
 }
