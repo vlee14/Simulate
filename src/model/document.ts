@@ -40,6 +40,9 @@ export const DEFAULT_CONFIG: SimConfig = {
   mcConfidence: 0.95,
   mcRelError: 0.05,
   mcTailQuantile: 0.95,
+  mcCampaignSize: 1000,
+  mcOverlayCount: 96,
+  mcShowAllLines: false,
 };
 
 export const DEFAULT_DESIGN: DesignConfig = {
