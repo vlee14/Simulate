@@ -1,4 +1,3 @@
-import { readPendulumParams } from './physics';
 import { CompiledModel, compile, RuntimeBlock, SimCompileError } from './compile';
 import { telemetry } from './telemetry';
 import { GraphEdge, GraphNode, Param, SimConfig } from './types';
@@ -193,13 +192,17 @@ export class SimulationEngine {
           telemetry.ensure(block.id, port, capacity).push(this.time, block.inputs[port]);
         }
       }
-      if (block.type === 'pendulum') {
+      if (block.type === 'stage') {
         const last = this.trailStamp.get(block.id) ?? -Infinity;
         if (forceTrail || this.time - last >= 0.02) {
           this.trailStamp.set(block.id, this.time);
-          const p = readPendulumParams(block.ctx.parameters);
-          const tipX = block.outputs.x + p.l1 * Math.sin(block.outputs.th1) + p.l2 * Math.sin(block.outputs.th2);
-          const tipY = p.l1 * Math.cos(block.outputs.th1) + p.l2 * Math.cos(block.outputs.th2);
+          const l1 = Number(block.ctx.parameters.l1) || 0.4;
+          const l2 = Number(block.ctx.parameters.l2) || 0.4;
+          const x = block.inputs.x ?? 0;
+          const th1 = block.inputs.th1 ?? 0;
+          const th2 = block.inputs.th2 ?? 0;
+          const tipX = x + l1 * Math.sin(th1) + l2 * Math.sin(th2);
+          const tipY = l1 * Math.cos(th1) + l2 * Math.cos(th2);
           let trail = telemetry.trails.get(block.id);
           if (!trail) {
             trail = [];

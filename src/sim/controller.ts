@@ -1,6 +1,5 @@
 import { structureSignature, SimCompileError } from '../engine/compile';
-import { designPendulumLqr } from '../engine/lqr';
-import { readPendulumParams } from '../engine/physics';
+import { designDynamicsLqr } from '../engine/lqr';
 import { SimulationEngine } from '../engine/runtime';
 import { telemetry } from '../engine/telemetry';
 import { toGraph } from '../model/elements';
@@ -16,6 +15,8 @@ let rateSim = 0;
 let rateWall = 0;
 let signature = '';
 let installed = false;
+
+const DESIGNABLE = new Set(['ode', 'statespace', 'secondorder', 'mass', 'inertia', 'dcmotor', 'rlc']);
 
 function graphNow() {
   return toGraph(useStore.getState().elements);
@@ -150,33 +151,50 @@ export function resetSim(): void {
   store.setStatus('idle', 'Ready');
 }
 
+function findPlant() {
+  const { elements } = useStore.getState();
+  return elements.find((element) => {
+    if ('source' in element) return false;
+    const type = (element.data as { blockType?: string })?.blockType;
+    return type === 'ode' || type === 'statespace' || type === 'secondorder' || type === 'dcmotor';
+  });
+}
+
 export function nudgePlant(which: 'th1' | 'th2' | 'cart'): void {
   const amount = which === 'th1' ? 0.12 : which === 'th2' ? -0.12 : 0.6;
   const index = which === 'th1' ? 1 : which === 'th2' ? 2 : 3;
-  const key = which === 'th1' ? 'th1_0' : which === 'th2' ? 'th2_0' : 'dx0';
-  const { elements, status, updateParam } = useStore.getState();
-  const plant = elements.find((element) => !('source' in element) && (element.data as { blockType?: string })?.blockType === 'pendulum');
+  const { status, updateParam } = useStore.getState();
+  const plant = findPlant();
   if (!plant) return;
+  const data = plant.data as { blockType?: string; parameters: Record<string, string | number> };
+  if (data.blockType !== 'ode') return;
   if (engine && (status === 'running' || status === 'paused')) {
     engine.nudge(plant.id, index, amount);
     telemetry.publish();
     return;
   }
-  const params = (plant.data as { parameters: Record<string, number> }).parameters;
-  updateParam(plant.id, key, Number(params[key] ?? 0) + amount);
+  const parts = String(data.parameters.x0 ?? '0')
+    .trim()
+    .split(/[\s,;]+/)
+    .map(Number);
+  while (parts.length < 6) parts.push(0);
+  parts[index] = (Number.isFinite(parts[index]) ? parts[index] : 0) + amount;
+  updateParam(plant.id, 'x0', parts.join(' '));
 }
 
 export function computeLqr(): void {
   const state = useStore.getState();
   const graph = graphNow();
-  const plant = graph.nodes.find((node) => node.blockType === 'pendulum');
+  const selected = state.selectedIds[0];
+  const plant =
+    graph.nodes.find((node) => node.id === selected && DESIGNABLE.has(node.blockType)) ??
+    graph.nodes.find((node) => DESIGNABLE.has(node.blockType));
   if (!plant) {
-    state.setStatus(state.status, 'Add a double pendulum block to design a controller.');
+    state.setStatus(state.status, 'Select a Dynamics plant (ODE, State-Space, …) to design a controller.');
     return;
   }
   try {
-    const params = readPendulumParams(plant.parameters);
-    const result = designPendulumLqr(params, state.design.Q, state.design.R);
+    const result = designDynamicsLqr(plant.blockType, plant.parameters, state.design.Q, state.design.R);
     const gains = regulatorGains(result.K);
     let applied = 0;
     for (const [id, value] of Object.entries(gains)) {
@@ -185,8 +203,20 @@ export function computeLqr(): void {
       useStore.getState().applyGain(node.id, value);
       applied++;
     }
+    // Generic fallback: apply K onto gain blocks named gain-0… when regulator roles are absent.
+    if (applied === 0) {
+      result.K.forEach((value, index) => {
+        const node = graph.nodes.find((item) => item.id === `gain-${index}` || item.role === `gain-${index}`);
+        if (!node || node.blockType !== 'gain') return;
+        useStore.getState().applyGain(node.id, -value);
+        applied++;
+      });
+    }
     useStore.getState().setDesignView({
-      summary: applied === 6 ? 'Gains written onto the six feedback blocks.' : `Updated ${applied} of 6 gain blocks.`,
+      summary:
+        applied > 0
+          ? `Linearized “${plant.blockType}” and wrote ${applied} gain${applied === 1 ? '' : 's'}.`
+          : `Linearized “${plant.blockType}”. Add gain blocks with roles gain-x… or gain-0… to apply K.`,
       open: describePoles(result.polesOpen),
       closed: describePoles(result.polesClosed),
       gains: Object.entries(gains).map(([id, value]) => ({ id, value })),

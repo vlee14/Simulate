@@ -7,7 +7,7 @@ import { computeLqr, resetSim } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
 
-const Q_LABELS = ['x  cart position', 'θ₁  upper angle', 'θ₂  lower angle', 'ẋ  cart velocity', 'ω₁', 'ω₂'];
+const Q_LABELS = ['x₁ / x', 'x₂ / θ₁', 'x₃ / θ₂', 'x₄ / ẋ', 'x₅ / ω₁', 'x₆ / ω₂'];
 
 export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
   mobileOpen,
@@ -214,8 +214,8 @@ function DesignPane() {
     <div className="pane">
       <h2>LQR design</h2>
       <p className="lede">
-        Linearize the cart double pendulum about the upright equilibrium and place the optimal gain on the six feedback blocks.
-        The law is u = −K(z − r), with the reference subtracted from cart position only.
+        Linearize the selected Dynamics plant (ODE, State-Space, Second-Order, …) about the current equilibrium and write gains onto matching feedback blocks.
+        For the cart–pendulum example the law is u = −K(z − r).
       </p>
       <h3>State weight Q</h3>
       {Q_LABELS.map((label, index) => (
@@ -260,7 +260,7 @@ function DesignPane() {
           </ul>
         </div>
       ) : (
-        <p className="hint">Run is not required. Edit the plant masses or lengths, then compute again.</p>
+        <p className="hint">Run is not required. Edit plant parameters or Q/R, then compute again.</p>
       )}
     </div>
   );

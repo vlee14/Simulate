@@ -1,8 +1,8 @@
 import { getBlock } from '../engine/blocks';
-import { designPendulumLqr } from '../engine/lqr';
-import { DEFAULT_PENDULUM } from '../engine/physics';
+import { designDynamicsLqr } from '../engine/lqr';
 import { GraphEdge, GraphNode } from '../engine/types';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, DocNode, SimDocument } from './document';
+import { CART_DOUBLE_PENDULUM_ODE } from './plants';
 
 export const GAIN_ROLES = ['gain-x', 'gain-dx', 'gain-th1', 'gain-w1', 'gain-th2', 'gain-w2'] as const;
 
@@ -48,7 +48,7 @@ export function pendulumDocument(): SimDocument {
     'gain-w2': 0,
   };
   try {
-    const result = designPendulumLqr(DEFAULT_PENDULUM, design.Q, design.R);
+    const result = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, design.Q, design.R);
     gains = regulatorGains(result.K);
   } catch (error) {
     console.warn(error);
@@ -56,7 +56,7 @@ export function pendulumDocument(): SimDocument {
   const deg = 180 / Math.PI;
   const nodes: DocNode[] = [
     node('note-law', 'note', 16, 8, {
-      text: 'State feedback    u = −K (z − r)    z = [x  θ₁  θ₂  ẋ  ω₁  ω₂]',
+      text: 'Plant is a mass-matrix ODE. State feedback u = −K (z − r) with z = [x  θ₁  θ₂  ẋ  ω₁  ω₂]',
     }, 'Control law'),
     node('ref', 'constant', 16, 96, { value: 0 }, 'x ref'),
     node('sum-x', 'sum', 132, 86, { signs: '+-' }, 'x error'),
@@ -71,24 +71,10 @@ export function pendulumDocument(): SimDocument {
     node('pulse', 'pulse', 553, 392, { amplitude: 16, delay: 8, width: 0.18, period: 0 }, 'Disturbance'),
     node('manual', 'manual', 553, 488, { value: 0, min: -25, max: 25 }, 'Hand force'),
     node('sum-f', 'sum', 685, 280, { signs: '+++' }, 'Σ F'),
-    node(
-      'plant',
-      'pendulum',
-      822,
-      217,
-      {
-        ...DEFAULT_PENDULUM,
-        x0: 0,
-        th1_0: 0.18,
-        th2_0: -0.12,
-        dx0: 0,
-        w1_0: 0,
-        w2_0: 0,
-      },
-      'Cart double pendulum'
-    ),
+    node('plant', 'ode', 822, 217, { ...CART_DOUBLE_PENDULUM_ODE }, 'Cart double pendulum'),
+    node('stage', 'stage', 822, 430, { links: 2, l1: 0.4, l2: 0.4 }, 'Stage'),
     node('note-plant', 'note', 822, 16, {
-      text: 'Angles are measured from upright. The upright state is unstable until the loop is closed.',
+      text: 'Dynamics come from the ODE mass matrix M(q)q̈ = rhs. Edit constants, M, or rhs to change the plant.',
     }),
     node('scope-cart', 'scope', 1188, 24, { inputCount: 2, timeSpan: 16, autoScale: true, yMin: -1, yMax: 1 }, 'Cart & force'),
     node('xy', 'xy', 1468, 24, { timeSpan: 16 }, 'θ₁ vs θ₂'),
@@ -100,13 +86,13 @@ export function pendulumDocument(): SimDocument {
 
   const edges = [
     edge('ref', 'out', 'sum-x', 'in0'),
-    edge('plant', 'x', 'sum-x', 'in1'),
+    edge('plant', 'y0', 'sum-x', 'in1'),
     edge('sum-x', 'out', 'gain-x', 'in'),
-    edge('plant', 'dx', 'gain-dx', 'in'),
-    edge('plant', 'th1', 'gain-th1', 'in'),
-    edge('plant', 'w1', 'gain-w1', 'in'),
-    edge('plant', 'th2', 'gain-th2', 'in'),
-    edge('plant', 'w2', 'gain-w2', 'in'),
+    edge('plant', 'y3', 'gain-dx', 'in'),
+    edge('plant', 'y1', 'gain-th1', 'in'),
+    edge('plant', 'y4', 'gain-w1', 'in'),
+    edge('plant', 'y2', 'gain-th2', 'in'),
+    edge('plant', 'y5', 'gain-w2', 'in'),
     edge('gain-x', 'out', 'sum-u', 'in0'),
     edge('gain-dx', 'out', 'sum-u', 'in1'),
     edge('gain-th1', 'out', 'sum-u', 'in2'),
@@ -117,22 +103,26 @@ export function pendulumDocument(): SimDocument {
     edge('sat', 'out', 'sum-f', 'in0'),
     edge('pulse', 'out', 'sum-f', 'in1'),
     edge('manual', 'out', 'sum-f', 'in2'),
-    edge('sum-f', 'out', 'plant', 'force'),
-    edge('plant', 'th1', 'deg1', 'in'),
-    edge('plant', 'th2', 'deg2', 'in'),
+    edge('sum-f', 'out', 'plant', 'u1'),
+    edge('plant', 'y0', 'stage', 'x'),
+    edge('plant', 'y1', 'stage', 'th1'),
+    edge('plant', 'y2', 'stage', 'th2'),
+    edge('sum-f', 'out', 'stage', 'force'),
+    edge('plant', 'y1', 'deg1', 'in'),
+    edge('plant', 'y2', 'deg2', 'in'),
     edge('deg1', 'out', 'scope-ang', 'in0'),
     edge('deg2', 'out', 'scope-ang', 'in1'),
-    edge('plant', 'x', 'scope-cart', 'in0'),
+    edge('plant', 'y0', 'scope-cart', 'in0'),
     edge('sum-f', 'out', 'scope-cart', 'in1'),
-    edge('plant', 'th1', 'xy', 'x'),
-    edge('plant', 'th2', 'xy', 'y'),
+    edge('plant', 'y1', 'xy', 'x'),
+    edge('plant', 'y2', 'xy', 'y'),
     edge('sum-f', 'out', 'meter-f', 'in'),
   ];
 
   return {
     name: 'Inverted double pendulum',
     description:
-      'A cart balances two pendulums about the upright equilibrium with state feedback. Retune it from the Design panel, then kick it.',
+      'A cart balances two pendulums with state feedback. The plant is a generic mass-matrix ODE — not a hard-coded pendulum block.',
     config: { ...DEFAULT_CONFIG, stopTime: 16, stepSize: 0.001, solver: 'rk4', speed: 1, startTime: 0 },
     design,
     nodes,
@@ -143,60 +133,56 @@ export function pendulumDocument(): SimDocument {
 export function oscillatorDocument(): SimDocument {
   return {
     name: 'Mass-spring-damper',
-    description: 'A unit step force on mẍ + cẋ + kx = F. Watch the underdamped settle at x = F/k.',
+    description: 'Built from Mass, Spring, and Damper blocks. A step force settles at x = F/k.',
     config: { solver: 'rk4', stepSize: 0.002, stopTime: 14, startTime: 0, speed: 1 },
     design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
     nodes: [
-      node('note', 'note', 16, 8, { text: 'm = 1,   c = 0.3,   k = 1.   The step force settles at x = 1.' }),
+      node('note', 'note', 16, 8, { text: 'm = 1, c = 0.3, k = 1. Mechanical building blocks close Newton’s law.' }),
       node('force', 'step', 16, 118, { stepTime: 0.4, initialValue: 0, finalValue: 1 }, 'Force'),
-      node('sum', 'sum', 140, 104, { signs: '+--' }, 'Σ'),
-      node('invm', 'gain', 268, 118, { k: 1 }, '1/m'),
-      node('v', 'integrator', 410, 115, { initialCondition: 0 }, 'velocity'),
-      node('x', 'integrator', 528, 115, { initialCondition: 0 }, 'position'),
-      node('damp', 'gain', 140, 300, { k: 0.3 }, 'c'),
-      node('spring', 'gain', 280, 300, { k: 1 }, 'k'),
-      node('scope', 'scope', 660, 40, { inputCount: 2, timeSpan: 14, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'x and v'),
-      node('meter', 'meter', 660, 292, { digits: 3 }, 'x'),
+      node('sum', 'sum', 140, 104, { signs: '+--' }, 'Σ F'),
+      node('mass', 'mass', 300, 112, { m: 1, x0: 0, v0: 0 }, 'Mass'),
+      node('damper', 'damper', 140, 300, { c: 0.3 }, 'Damper'),
+      node('spring', 'spring', 300, 300, { k: 1 }, 'Spring'),
+      node('scope', 'scope', 500, 40, { inputCount: 2, timeSpan: 14, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'x and v'),
+      node('meter', 'meter', 500, 292, { digits: 3 }, 'x'),
     ],
     edges: [
       edge('force', 'out', 'sum', 'in0'),
-      edge('damp', 'out', 'sum', 'in1'),
+      edge('damper', 'out', 'sum', 'in1'),
       edge('spring', 'out', 'sum', 'in2'),
-      edge('sum', 'out', 'invm', 'in'),
-      edge('invm', 'out', 'v', 'in'),
-      edge('v', 'out', 'x', 'in'),
-      edge('v', 'out', 'damp', 'in'),
-      edge('x', 'out', 'spring', 'in'),
-      edge('x', 'out', 'scope', 'in0'),
-      edge('v', 'out', 'scope', 'in1'),
-      edge('x', 'out', 'meter', 'in'),
+      edge('sum', 'out', 'mass', 'F'),
+      edge('mass', 'v', 'damper', 'in'),
+      edge('mass', 'x', 'spring', 'in'),
+      edge('mass', 'x', 'scope', 'in0'),
+      edge('mass', 'v', 'scope', 'in1'),
+      edge('mass', 'x', 'meter', 'in'),
     ],
   };
 }
 
 export function pidDocument(): SimDocument {
   return {
-    name: 'PID plant',
-    description: 'A PID drives the plant 1/(s+1) to a unit step. Retune Kp, Ki, and Kd on the controller block.',
+    name: 'PID on second-order plant',
+    description: 'A PID drives the generic Second-Order plant to a unit step.',
     config: { solver: 'rk4', stepSize: 0.002, stopTime: 12, startTime: 0, speed: 1 },
     design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
     nodes: [
-      node('note', 'note', 16, 8, { text: 'Plant G(s) = 1/(s+1). The step is the reference. Error is reference minus output.' }),
+      node('note', 'note', 16, 8, { text: 'Plant is ÿ + 2ζωẏ + ω²y = K u with ωn = 2, ζ = 0.25, K = 1.' }),
       node('ref', 'step', 16, 128, { stepTime: 0.3, initialValue: 0, finalValue: 1 }, 'Reference'),
       node('sum', 'sum', 144, 121, { signs: '+-' }, 'Error'),
-      node('pid', 'pid', 260, 128, { Kp: 2, Ki: 1.4, Kd: 0.15, Tf: 0.05, limitOutput: true, upperLimit: 8, lowerLimit: -8 }, 'PID'),
-      node('plant', 'transfer', 388, 119, { numerator: '1', denominator: '1 1' }, '1/(s+1)'),
-      node('scope', 'scope', 548, 52, { inputCount: 2, timeSpan: 12, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'Ref & y'),
-      node('meter', 'meter', 548, 268, { digits: 3 }, 'y'),
+      node('pid', 'pid', 260, 128, { Kp: 3.5, Ki: 4, Kd: 0.8, Tf: 0.05, limitOutput: true, upperLimit: 12, lowerLimit: -12 }, 'PID'),
+      node('plant', 'secondorder', 420, 119, { wn: 2, zeta: 0.25, K: 1, y0: 0, dy0: 0 }, 'Second-order'),
+      node('scope', 'scope', 600, 52, { inputCount: 2, timeSpan: 12, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'Ref & y'),
+      node('meter', 'meter', 600, 268, { digits: 3 }, 'y'),
     ],
     edges: [
       edge('ref', 'out', 'sum', 'in0'),
-      edge('plant', 'out', 'sum', 'in1'),
+      edge('plant', 'y', 'sum', 'in1'),
       edge('sum', 'out', 'pid', 'in'),
-      edge('pid', 'out', 'plant', 'in'),
+      edge('pid', 'out', 'plant', 'u'),
       edge('ref', 'out', 'scope', 'in0'),
-      edge('plant', 'out', 'scope', 'in1'),
-      edge('plant', 'out', 'meter', 'in'),
+      edge('plant', 'y', 'scope', 'in1'),
+      edge('plant', 'y', 'meter', 'in'),
     ],
   };
 }
@@ -226,13 +212,75 @@ export function harmonicDocument(): SimDocument {
   };
 }
 
+export function motorDocument(): SimDocument {
+  return {
+    name: 'DC motor speed control',
+    description: 'Armature voltage steps; a PID regulates rotor speed on the DC Motor block.',
+    config: { solver: 'rk4', stepSize: 0.001, stopTime: 8, startTime: 0, speed: 1 },
+    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    nodes: [
+      node('note', 'note', 16, 8, { text: 'Electrical + mechanical domains in one DC Motor building block. TL is a load disturbance.' }),
+      node('ref', 'step', 16, 120, { stepTime: 0.4, initialValue: 0, finalValue: 5 }, 'ω ref'),
+      node('sum', 'sum', 150, 112, { signs: '+-' }, 'Error'),
+      node('pid', 'pid', 280, 120, { Kp: 8, Ki: 25, Kd: 0.2, Tf: 0.02, limitOutput: true, upperLimit: 48, lowerLimit: -48 }, 'PID'),
+      node('load', 'pulse', 280, 280, { amplitude: 0.05, delay: 4, width: 0.5, period: 0 }, 'Load pulse'),
+      node('motor', 'dcmotor', 460, 150, { R: 1, L: 0.05, Kt: 0.1, Kb: 0.1, J: 0.02, b: 0.05 }, 'DC motor'),
+      node('scope', 'scope', 680, 40, { inputCount: 2, timeSpan: 8, autoScale: true, yMin: -1, yMax: 6 }, 'Ref & ω'),
+      node('meter', 'meter', 680, 280, { digits: 3 }, 'ω'),
+    ],
+    edges: [
+      edge('ref', 'out', 'sum', 'in0'),
+      edge('motor', 'w', 'sum', 'in1'),
+      edge('sum', 'out', 'pid', 'in'),
+      edge('pid', 'out', 'motor', 'Va'),
+      edge('load', 'out', 'motor', 'TL'),
+      edge('ref', 'out', 'scope', 'in0'),
+      edge('motor', 'w', 'scope', 'in1'),
+      edge('motor', 'w', 'meter', 'in'),
+    ],
+  };
+}
+
+export function pneumaticDocument(): SimDocument {
+  return {
+    name: 'Pneumatic tank charge',
+    description: 'A valve from a supply pressure fills an isothermal tank. Opening steps at t = 0.5 s.',
+    config: { solver: 'rk4', stepSize: 0.002, stopTime: 10, startTime: 0, speed: 1 },
+    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    nodes: [
+      node('note', 'note', 16, 8, { text: 'Pneumatic Valve + Tank. q = Cd·open·sign(Δp)·√|Δp|, C ṗ = q.' }),
+      node('supply', 'constant', 16, 120, { value: 5 }, 'Supply p'),
+      node('open', 'step', 16, 240, { stepTime: 0.5, initialValue: 0, finalValue: 1 }, 'Valve open'),
+      node('valve', 'pneumatic_valve', 200, 150, { Cd: 0.35 }, 'Valve'),
+      node('vent', 'constant', 200, 300, { value: 0 }, 'Vent q'),
+      node('tank', 'pneumatic_tank', 380, 160, { C: 0.05, p0: 1 }, 'Tank'),
+      node('scope', 'scope', 560, 48, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: 0, yMax: 5.5 }, 'p & q'),
+      node('meter', 'meter', 560, 280, { digits: 3 }, 'p'),
+    ],
+    edges: [
+      edge('supply', 'out', 'valve', 'p1'),
+      edge('tank', 'p', 'valve', 'p2'),
+      edge('open', 'out', 'valve', 'open'),
+      edge('valve', 'q', 'tank', 'qin'),
+      edge('vent', 'out', 'tank', 'qout'),
+      edge('tank', 'p', 'scope', 'in0'),
+      edge('valve', 'q', 'scope', 'in1'),
+      edge('tank', 'p', 'meter', 'in'),
+    ],
+  };
+}
+
 export function blankDocument(): SimDocument {
   return {
     name: 'Untitled',
     description: 'Empty diagram.',
     config: { ...DEFAULT_CONFIG, stopTime: 10 },
     design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
-    nodes: [node('note', 'note', 80, 80, { text: 'Drag blocks from the library. Wire an output to an input, then run.' })],
+    nodes: [
+      node('note', 'note', 80, 80, {
+        text: 'Drag Dynamics blocks (ODE, Mass, Motor, Pneumatic…) to build a plant, then run.',
+      }),
+    ],
     edges: [],
   };
 }
@@ -248,25 +296,37 @@ export const EXAMPLES: ExampleTemplate[] = [
   {
     id: 'pendulum',
     name: 'Inverted double pendulum',
-    summary: 'State feedback that balances a cart and two pendulums. Includes an LQR design panel.',
+    summary: 'Mass-matrix ODE plant with state feedback and an animated stage.',
     create: pendulumDocument,
   },
   {
+    id: 'motor',
+    name: 'DC motor speed control',
+    summary: 'Electrical + mechanical motor block under PID speed control.',
+    create: motorDocument,
+  },
+  {
+    id: 'pneumatic',
+    name: 'Pneumatic tank charge',
+    summary: 'Valve and isothermal tank from the pneumatic domain library.',
+    create: pneumaticDocument,
+  },
+  {
     id: 'pid',
-    name: 'PID plant',
-    summary: 'A PID controller tracking a step on the plant 1/(s+1).',
+    name: 'PID on second-order plant',
+    summary: 'Generic second-order Dynamics block under PID control.',
     create: pidDocument,
   },
   {
     id: 'oscillator',
     name: 'Mass-spring-damper',
-    summary: 'mẍ + cẋ + kx = F, built from integrators and gains.',
+    summary: 'Mass, Spring, and Damper building blocks closing Newton’s law.',
     create: oscillatorDocument,
   },
   {
     id: 'harmonic',
     name: 'Harmonic oscillator',
-    summary: 'An undamped second-order loop. Position and velocity trade energy.',
+    summary: 'An undamped second-order loop from integrators and a gain.',
     create: harmonicDocument,
   },
 ];

@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Handle, NodeProps, Position } from 'react-flow-renderer';
 import { getBlock } from '../engine/blocks';
-import { readPendulumParams } from '../engine/physics';
 import { SIGNAL_COLORS } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
@@ -183,20 +182,19 @@ export const XYNode: React.FC<NodeProps> = ({ id, data, selected }) => {
 export const PlantNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const info = data as NodeData;
   const bad = useStore((state) => state.errorIds.includes(id));
-  const def = getBlock('pendulum');
+  const def = getBlock(info.blockType || 'stage');
   const ports = def ? safePorts(def, info.parameters) : { inputs: [], outputs: [] };
   const paramKey = JSON.stringify(info.parameters);
   const ref = useFrame(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    const params = readPendulumParams(info.parameters);
     const live = telemetry.latest.get(id);
     drawStage(canvas, {
-      x: live?.x ?? Number(info.parameters.x0 ?? 0),
-      th1: live?.th1 ?? Number(info.parameters.th1_0 ?? 0),
-      th2: live?.th2 ?? Number(info.parameters.th2_0 ?? 0),
-      l1: params.l1,
-      l2: params.l2,
+      x: live?.x ?? 0,
+      th1: live?.th1 ?? 0,
+      th2: live?.th2 ?? 0,
+      l1: Number(info.parameters.l1 ?? 0.4),
+      l2: Number(info.parameters.l2 ?? 0.4),
       force: live?.force ?? 0,
       trail: telemetry.trails.get(id) ?? [],
     });
@@ -205,8 +203,8 @@ export const PlantNode: React.FC<NodeProps> = ({ id, data, selected }) => {
     <div className={`plant ${selected ? 'is-selected' : ''} ${bad ? 'is-bad' : ''}`}>
       <Ports inputs={ports.inputs} outputs={ports.outputs} />
       <div className="instrument-head">
-        <span>{info.alias || 'Double pendulum'}</span>
-        <span>upright = 0</span>
+        <span>{info.alias || 'Stage'}</span>
+        <span>cart–pendulum</span>
       </div>
       <canvas ref={ref} className="plant-canvas" />
     </div>

@@ -243,3 +243,25 @@ export function expressionInputCount(source: string): number {
   while ((m = re.exec(source))) max = Math.max(max, Number(m[1]));
   return Math.max(1, Math.min(8, max));
 }
+
+/** How many state variables an expression addresses (x1…xN). */
+export function expressionStateCount(source: string): number {
+  let max = 0;
+  const re = /\bx(\d+)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source))) max = Math.max(max, Number(m[1]));
+  return Math.max(0, Math.min(12, max));
+}
+
+/** Split a semicolon-separated list of expressions. */
+export function splitExpressions(source: string): string[] {
+  return source
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+/** True when an expression reads an input (u or u1…uN). */
+export function expressionUsesInput(source: string): boolean {
+  return /(^|[^A-Za-z0-9_])u(\d*)\b/.test(source);
+}

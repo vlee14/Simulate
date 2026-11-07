@@ -111,9 +111,10 @@ The platform organizes blocks into functional categories:
 | Category | Typical Blocks | Purpose |
 | :--- | :--- | :--- |
 | **Sources** | Constant, Step, Sine Wave, Ramp, Pulse Generator, Clock | Inject independent driving signals into the model |
-| **Sinks** | Time Scope, XY Plotter, Numeric Display, To CSV / File | Inspect, monitor, visualize, and record outputs |
+| **Sinks** | Time Scope, XY Plotter, Numeric Display, Stage, To CSV / File | Inspect, monitor, visualize, and record outputs |
 | **Math Operations** | Gain, Sum (+/-), Product (*), Math Function (sin, cos, exp), Abs | Apply algebraic transformations to incoming signals |
-| **Continuous** | Integrator (1/s), Derivative, Transfer Function, State-Space | Model differential equations and analog dynamic systems |
+| **Continuous** | Integrator (1/s), Derivative, Transfer Function, State-Space, PID | Model differential equations and analog dynamic systems |
+| **Dynamics** | ODE, Second-Order, Mass, Inertia, Spring, Damper, DC Motor, RLC, Pneumatic Tank/Valve, Hydraulic Chamber, Thermal | Multi-domain plant building blocks and custom dynamics |
 | **Discrete** | Unit Delay (1/z), Discrete Filter, Zero-Order Hold | Model sampled-data systems, digital control, and DSP |
 | **Nonlinear / Routing** | Saturation, Dead Zone, Switch, Mux / Demux | Signal multiplexing, switching, and non-linear limits |
 
