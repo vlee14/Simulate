@@ -23,8 +23,9 @@ function edge(source: string, sourceHandle: string, target: string, targetHandle
 
 export function pendulumDocument(): SimDocument {
   const design = {
+    ...DEFAULT_DESIGN,
     Q: DEFAULT_DESIGN.Q.slice(),
-    R: DEFAULT_DESIGN.R,
+    analysis: DEFAULT_DESIGN.analysis.slice(),
   };
   // Generic LQR roles: ki ← −Kᵢ, optional kref ← +K₀
   let K = [0, 0, 0, 0, 0, 0];
@@ -115,7 +116,7 @@ export function oscillatorDocument(): SimDocument {
     name: 'Mass-spring-damper',
     description: 'Built from Mass, Spring, and Damper blocks. A step force settles at x = F/k.',
     config: { solver: 'rk4', stepSize: 0.002, stopTime: 14, startTime: 0, speed: 1 },
-    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
     nodes: [
       node('note', 'note', 16, 8, {
         text: 'm = 1, c = 0.3, k = 1. Stage Hand force / Impulse use Manual + state nudge — same generic bindings as other plants.',
@@ -152,7 +153,7 @@ export function pidDocument(): SimDocument {
     name: 'PID on second-order plant',
     description: 'A PID drives the generic Second-Order plant to a unit step.',
     config: { solver: 'rk4', stepSize: 0.002, stopTime: 12, startTime: 0, speed: 1 },
-    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
     nodes: [
       node('note', 'note', 16, 8, { text: 'Plant is ÿ + 2ζωẏ + ω²y = K u with ωn = 2, ζ = 0.25, K = 1.' }),
       node('ref', 'step', 16, 128, { stepTime: 0.3, initialValue: 0, finalValue: 1 }, 'Reference'),
@@ -179,7 +180,7 @@ export function harmonicDocument(): SimDocument {
     name: 'Harmonic oscillator',
     description: 'ÿ + ω²y = 0 with ω² = 4. Position starts at rest and velocity starts at 1.',
     config: { solver: 'rk4', stepSize: 0.002, stopTime: 10, startTime: 0, speed: 1 },
-    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
     nodes: [
       node('note', 'note', 16, 8, { text: 'Two integrators and a gain close the loop ÿ = −ω² y. Period is π seconds.' }),
       node('v', 'integrator', 16, 112, { initialCondition: 1 }, 'velocity'),
@@ -204,7 +205,7 @@ export function motorDocument(): SimDocument {
     name: 'DC motor speed control',
     description: 'Armature voltage steps; a PID regulates rotor speed on the DC Motor block.',
     config: { solver: 'rk4', stepSize: 0.001, stopTime: 8, startTime: 0, speed: 1 },
-    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
     nodes: [
       node('note', 'note', 16, 8, { text: 'Electrical + mechanical domains in one DC Motor building block. TL is a load disturbance.' }),
       node('ref', 'step', 16, 120, { stepTime: 0.4, initialValue: 0, finalValue: 5 }, 'ω ref'),
@@ -238,7 +239,7 @@ export function pneumaticDocument(): SimDocument {
     name: 'Pneumatic tank charge',
     description: 'A valve from a supply pressure fills an isothermal tank. Opening steps at t = 0.5 s.',
     config: { solver: 'rk4', stepSize: 0.002, stopTime: 10, startTime: 0, speed: 1 },
-    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
     nodes: [
       node('note', 'note', 16, 8, { text: 'Pneumatic Valve + Tank. q = Cd·open·sign(Δp)·√|Δp|, C ṗ = q.' }),
       node('supply', 'constant', 16, 120, { value: 5 }, 'Supply p'),
@@ -270,7 +271,7 @@ export function blankDocument(): SimDocument {
     name: 'Untitled',
     description: 'Empty diagram.',
     config: { ...DEFAULT_CONFIG, stopTime: 10 },
-    design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+    design: { ...DEFAULT_DESIGN, Q: DEFAULT_DESIGN.Q.slice(), analysis: DEFAULT_DESIGN.analysis.slice() },
     nodes: [
       node('note', 'note', 80, 80, {
         text: 'Drag Dynamics blocks (ODE, Mass, Motor, Pneumatic…) to build a plant, then run.',

@@ -9,6 +9,7 @@ import { designDynamicsLqr, lqr } from './lqr';
 import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
 import { parseStageConfig, stageTrailTip } from './scene';
+import { analyzeStability, parseVector } from './stability';
 import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
@@ -69,6 +70,28 @@ function main(): void {
   const odeLqr = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, weights, 0.8);
   assert(odeLqr.polesClosed.length === 6, `expected 6 closed-loop poles from ODE, got ${odeLqr.polesClosed.length}`);
   assert(odeLqr.polesClosed.every((e) => e.real < 0), 'ODE LQR closed loop should be stable');
+
+  const { A: Aeq, B: Beq } = linearizeBlock('ode', { ...CART_DOUBLE_PENDULUM_ODE }, new Array(6).fill(0), [0]);
+  const reportEq = analyzeStability(Aeq, Beq.map((row) => [row[0] ?? 0]), odeLqr.K);
+  assert(!reportEq.openStable, 'upright open loop should be unstable');
+  assert(reportEq.closedStable, 'LQR closed loop should be Hurwitz');
+  assert(reportEq.controllable, 'cart–pendulum should be controllable at equilibrium');
+  assert(reportEq.modes.length > 0, 'damping analysis should report modes');
+
+  // Custom breakpoint (near tip) still linearizes and yields a report.
+  const xTip = parseVector('0 0.2 -0.1 0 0 0', 6);
+  const { A: Atip, B: Btip } = linearizeBlock('ode', { ...CART_DOUBLE_PENDULUM_ODE }, xTip, [0]);
+  const reportTip = analyzeStability(
+    Atip,
+    Btip.map((row) => [row[0] ?? 0]),
+    odeLqr.K,
+    ['poles', 'ctrb', 'margins', 'bode', 'nyquist', 'nichols', 'rlocus']
+  );
+  assert(reportTip.polesOpen.length === 6, 'breakpoint linearization should keep state dim');
+  assert(reportTip.margins != null, 'margins option should produce a margins block');
+  assert(reportTip.freq.length > 20, `Bode/Nyquist need frequency samples, got ${reportTip.freq.length}`);
+  assert(reportTip.rootLocus.length === 6, `root locus should track ${6} branches`);
+  assert(reportTip.rootLocus[0].points.length > 10, 'root locus branches should be sampled');
 
   const doc = pendulumDocument();
   const designed = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, doc.design.Q, doc.design.R);

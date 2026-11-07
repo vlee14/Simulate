@@ -84,9 +84,31 @@ export interface SimConfig {
   speed: number;
 }
 
+/** Where to linearize the plant for LQR / stability analysis. */
+export type LinearizationPoint = 'equilibrium' | 'x0' | 'live' | 'custom';
+
+export type AnalysisOption =
+  | 'poles'
+  | 'margins'
+  | 'damping'
+  | 'ctrb'
+  | 'polemap'
+  | 'bode'
+  | 'nyquist'
+  | 'nichols'
+  | 'rlocus';
+
 export interface DesignConfig {
   Q: number[];
   R: number;
+  /** Operating / linearization point for A,B. */
+  opMode: LinearizationPoint;
+  /** Custom state vector when opMode is `custom` (space-separated). */
+  xOp: string;
+  /** Custom input vector when opMode is `custom` (space-separated). */
+  uOp: string;
+  /** Which stability reports to compute / show. */
+  analysis: AnalysisOption[];
 }
 
 export const SIGNAL_COLORS = ['#e7a23a', '#5ec8ff', '#ff6b8a', '#7ddea0', '#d2a8ff', '#ffb085'];

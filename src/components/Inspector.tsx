@@ -1,14 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
-import { Param, ParamSpec } from '../engine/types';
+import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
+import { AnalysisOption, LinearizationPoint, Param, ParamSpec } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
-import { computeLqr, resetSim } from '../sim/controller';
+import { analyzeController, captureLinearizationPoint, computeLqr, resetSim } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
+import { StabilityPlotGrid } from './StabilityPlots';
 
 const Q_LABELS = ['Q₁ (x₁)', 'Q₂ (x₂)', 'Q₃ (x₃)', 'Q₄ (x₄)', 'Q₅ (x₅)', 'Q₆ (x₆)'];
+
+const OP_MODES: { id: LinearizationPoint; label: string }[] = [
+  { id: 'equilibrium', label: 'Equilibrium (0)' },
+  { id: 'x0', label: 'Plant x₀' },
+  { id: 'live', label: 'Live simulation state' },
+  { id: 'custom', label: 'Custom breakpoint' },
+];
 
 export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
   mobileOpen,
@@ -254,12 +263,70 @@ function DesignPane() {
   const view = useStore((state) => state.designView);
   const setDesignWeight = useStore((state) => state.setDesignWeight);
   const setDesignR = useStore((state) => state.setDesignR);
+  const setDesignOpMode = useStore((state) => state.setDesignOpMode);
+  const setDesignOp = useStore((state) => state.setDesignOp);
+  const setDesignAnalysis = useStore((state) => state.setDesignAnalysis);
+  const report = view?.report;
+  const show = (option: AnalysisOption) => (design.analysis ?? []).includes(option);
+
   return (
     <div className="pane">
-      <h2>LQR design</h2>
+      <h2>Control design</h2>
       <p className="lede">
-        Linearize the selected Dynamics plant (ODE, State-Space, Second-Order, …) about equilibrium and write −Kᵢ onto gain blocks with roles k0, k1, … (optional kref gets +K₀).
+        Pick a linearization / breakpoint, choose stability reports, then analyze the current controller or compute LQR onto gain roles k0… / kref.
       </p>
+
+      <h3>Linearization point</h3>
+      <label className="field">
+        <span>Operating point</span>
+        <select value={design.opMode} onChange={(event) => setDesignOpMode(event.target.value as LinearizationPoint)}>
+          {OP_MODES.map((mode) => (
+            <option key={mode.id} value={mode.id}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+        <em>Where A,B are taken for LQR and stability analysis.</em>
+      </label>
+      <label className="field">
+        <span>x* (state)</span>
+        <input
+          value={design.xOp}
+          placeholder="0 0 0 …"
+          disabled={design.opMode !== 'custom'}
+          onChange={(event) => setDesignOp({ xOp: event.target.value })}
+        />
+      </label>
+      <label className="field">
+        <span>u* (input)</span>
+        <input value={design.uOp} placeholder="0" onChange={(event) => setDesignOp({ uOp: event.target.value })} />
+      </label>
+      <div className="design-actions">
+        <button type="button" className="ghost" onClick={() => captureLinearizationPoint('x0')}>
+          Capture x₀
+        </button>
+        <button type="button" className="ghost" onClick={() => captureLinearizationPoint('live')}>
+          Capture live
+        </button>
+      </div>
+
+      <h3>Stability analysis</h3>
+      <div className="analysis-options">
+        {ALL_ANALYSIS_OPTIONS.map((option) => (
+          <label key={option.id} className="check">
+            <input
+              type="checkbox"
+              checked={show(option.id)}
+              onChange={(event) => setDesignAnalysis(option.id, event.target.checked)}
+            />
+            <span>
+              {option.label}
+              <em>{option.help}</em>
+            </span>
+          </label>
+        ))}
+      </div>
+
       <h3>State weight Q</h3>
       {Q_LABELS.map((label, index) => (
         <NumberField
@@ -272,26 +339,110 @@ function DesignPane() {
       ))}
       <h3>Control weight R</h3>
       <NumberField label="R (control)" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
-      <button className="primary wide" onClick={() => computeLqr()}>
-        Compute LQR and apply
-      </button>
+
+      <div className="design-actions stacked">
+        <button className="ghost wide" onClick={() => analyzeController()}>
+          Analyze stability
+        </button>
+        <button className="primary wide" onClick={() => computeLqr()}>
+          Compute LQR and apply
+        </button>
+      </div>
+
       {view ? (
         <div className="poles">
           <p>{view.summary}</p>
-          <h3>Open-loop poles</h3>
-          <ul>
-            {view.open.map((pole) => (
-              <li key={`o-${pole}`} className={pole.trim().startsWith('-') || pole.trim().startsWith('−') ? '' : 'unstable'}>
-                {pole}
-              </li>
-            ))}
-          </ul>
-          <h3>Closed-loop poles</h3>
-          <ul>
-            {view.closed.map((pole) => (
-              <li key={`c-${pole}`}>{pole}</li>
-            ))}
-          </ul>
+          {view.opLabel ? <p className="hint">Breakpoint: {view.opLabel}</p> : null}
+
+          {report ? (
+            <ul className="gain-list report-summary">
+              {report.summary.map((line) => (
+                <li key={line}>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {report ? <StabilityPlotGrid report={report} show={show} /> : null}
+
+          {show('poles') ? (
+            <>
+              <h3>Open-loop poles</h3>
+              <ul>
+                {view.open.map((pole) => (
+                  <li key={`o-${pole}`} className={pole.trim().startsWith('-') || pole.trim().startsWith('−') ? '' : 'unstable'}>
+                    {pole}
+                  </li>
+                ))}
+              </ul>
+              <h3>Closed-loop poles</h3>
+              <ul>
+                {view.closed.map((pole) => (
+                  <li key={`c-${pole}`} className={pole.trim().startsWith('-') || pole.trim().startsWith('−') ? '' : 'unstable'}>
+                    {pole}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+
+          {show('damping') && report?.modes.length ? (
+            <>
+              <h3>Closed-loop modes</h3>
+              <ul className="gain-list">
+                {report.modes.map((mode) => (
+                  <li key={mode.label}>
+                    <span>{mode.label}</span>
+                    <span>
+                      ζ {mode.zeta.toFixed(2)} · ωₙ {mode.wn.toFixed(2)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+
+          {show('margins') && report?.margins ? (
+            <>
+              <h3>Loop margins</h3>
+              <ul className="gain-list">
+                <li>
+                  <span>Gain margin</span>
+                  <span>{report.margins.gainMarginDb == null ? '—' : `${report.margins.gainMarginDb.toFixed(1)} dB`}</span>
+                </li>
+                <li>
+                  <span>Phase margin</span>
+                  <span>{report.margins.phaseMarginDeg == null ? '—' : `${report.margins.phaseMarginDeg.toFixed(1)}°`}</span>
+                </li>
+                <li>
+                  <span>ω_gc</span>
+                  <span>{report.margins.gainCrossoverRad == null ? '—' : `${report.margins.gainCrossoverRad.toFixed(2)} rad/s`}</span>
+                </li>
+                <li>
+                  <span>ω_pc</span>
+                  <span>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)} rad/s`}</span>
+                </li>
+              </ul>
+              <p className="hint">{report.margins.note}</p>
+            </>
+          ) : null}
+
+          {show('ctrb') && report ? (
+            <>
+              <h3>Controllability</h3>
+              <ul className="gain-list">
+                <li>
+                  <span>Rank</span>
+                  <span>
+                    {report.controllabilityRank} / {report.n}
+                    {report.controllable ? '' : ' (deficient)'}
+                  </span>
+                </li>
+              </ul>
+            </>
+          ) : null}
+
           <h3>Block gains</h3>
           <ul className="gain-list">
             {view.gains.map((gain) => (
@@ -303,7 +454,7 @@ function DesignPane() {
           </ul>
         </div>
       ) : (
-        <p className="hint">Run is not required. Edit plant parameters or Q/R, then compute again.</p>
+        <p className="hint">Select a plant, set the breakpoint, then Analyze or Compute LQR.</p>
       )}
     </div>
   );

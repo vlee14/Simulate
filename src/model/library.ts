@@ -58,6 +58,12 @@ export function parseDocument(raw: unknown): SimDocument {
     design: {
       Q: Array.isArray(doc.design?.Q) && doc.design.Q.length ? doc.design.Q.map(Number) : DEFAULT_DESIGN.Q.slice(),
       R: Number(doc.design?.R ?? DEFAULT_DESIGN.R),
+      opMode: doc.design?.opMode ?? DEFAULT_DESIGN.opMode,
+      xOp: typeof doc.design?.xOp === 'string' ? doc.design.xOp : DEFAULT_DESIGN.xOp,
+      uOp: typeof doc.design?.uOp === 'string' ? doc.design.uOp : DEFAULT_DESIGN.uOp,
+      analysis: Array.isArray(doc.design?.analysis) && doc.design.analysis.length
+        ? doc.design.analysis
+        : DEFAULT_DESIGN.analysis.slice(),
     },
     nodes: doc.nodes,
     edges: doc.edges,

@@ -2,17 +2,20 @@ import create from 'zustand';
 import { addEdge, Connection, Edge, Elements, Node } from 'react-flow-renderer';
 import { v4 as uuid } from 'uuid';
 import { getBlock } from '../engine/blocks';
-import { DesignConfig, Param, SimConfig } from '../engine/types';
+import { AnalysisOption, DesignConfig, LinearizationPoint, Param, SimConfig } from '../engine/types';
 import { formatPole } from '../engine/lqr';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, SimDocument } from '../model/document';
 import { edgeDefaults, isEdge, NodeData, toDocument, toElements } from '../model/elements';
 import { LibraryEntry, loadLibrary, persistLibrary } from '../model/library';
+import type { StabilityReport } from '../engine/stability';
 
 export interface DesignView {
   summary: string;
   open: string[];
   closed: string[];
   gains: { id: string; value: number }[];
+  opLabel?: string;
+  report?: StabilityReport | null;
 }
 
 interface AppState {
@@ -42,6 +45,9 @@ interface AppState {
   setConfig: (patch: Partial<SimConfig>) => void;
   setDesignWeight: (index: number, value: number) => void;
   setDesignR: (value: number) => void;
+  setDesignOpMode: (mode: LinearizationPoint) => void;
+  setDesignOp: (patch: { xOp?: string; uOp?: string }) => void;
+  setDesignAnalysis: (option: AnalysisOption, enabled: boolean) => void;
   setDesignView: (view: DesignView | null) => void;
   setSelected: (ids: string[]) => void;
   setStatus: (status: AppState['status'], message?: string, errorIds?: string[]) => void;
@@ -72,7 +78,14 @@ export const useStore = create<AppState>((set, get) => ({
   name: 'Untitled',
   description: '',
   config: { ...DEFAULT_CONFIG },
-  design: { Q: DEFAULT_DESIGN.Q.slice(), R: DEFAULT_DESIGN.R },
+  design: {
+    Q: DEFAULT_DESIGN.Q.slice(),
+    R: DEFAULT_DESIGN.R,
+    opMode: DEFAULT_DESIGN.opMode,
+    xOp: DEFAULT_DESIGN.xOp,
+    uOp: DEFAULT_DESIGN.uOp,
+    analysis: DEFAULT_DESIGN.analysis.slice(),
+  },
   designView: null,
   selectedIds: [],
   status: 'idle',
@@ -94,6 +107,10 @@ export const useStore = create<AppState>((set, get) => ({
       design: {
         Q: (model.design?.Q ?? DEFAULT_DESIGN.Q).slice(),
         R: model.design?.R ?? DEFAULT_DESIGN.R,
+        opMode: model.design?.opMode ?? DEFAULT_DESIGN.opMode,
+        xOp: model.design?.xOp ?? DEFAULT_DESIGN.xOp,
+        uOp: model.design?.uOp ?? DEFAULT_DESIGN.uOp,
+        analysis: (model.design?.analysis ?? DEFAULT_DESIGN.analysis).slice(),
       },
       designView: null,
       selectedIds: [],
@@ -165,6 +182,29 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
   setDesignR: (value) => set((state) => ({ design: { ...state.design, R: value }, dirty: true })),
+
+  setDesignOpMode: (opMode) => set((state) => ({ design: { ...state.design, opMode }, dirty: true })),
+
+  setDesignOp: (patch) =>
+    set((state) => ({
+      design: {
+        ...state.design,
+        xOp: patch.xOp ?? state.design.xOp,
+        uOp: patch.uOp ?? state.design.uOp,
+      },
+      dirty: true,
+    })),
+
+  setDesignAnalysis: (option, enabled) =>
+    set((state) => {
+      const setOpts = new Set(state.design.analysis);
+      if (enabled) setOpts.add(option);
+      else setOpts.delete(option);
+      const order = DEFAULT_DESIGN.analysis;
+      const analysis = order.filter((id) => setOpts.has(id));
+      for (const id of setOpts) if (!analysis.includes(id)) analysis.push(id);
+      return { design: { ...state.design, analysis }, dirty: true };
+    }),
 
   setDesignView: (designView) => set({ designView }),
 
