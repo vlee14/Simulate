@@ -3,20 +3,7 @@ import { designDynamicsLqr } from '../engine/lqr';
 import { GraphEdge, GraphNode } from '../engine/types';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, DocNode, SimDocument } from './document';
 import { CART_DOUBLE_PENDULUM_ODE } from './plants';
-
-export const GAIN_ROLES = ['gain-x', 'gain-dx', 'gain-th1', 'gain-w1', 'gain-th2', 'gain-w2'] as const;
-
-/** Block gains that realize u = −K (z − r), with the reference subtracted on cart position only. */
-export function regulatorGains(K: number[]): Record<string, number> {
-  return {
-    'gain-x': K[0],
-    'gain-th1': -K[1],
-    'gain-th2': -K[2],
-    'gain-dx': -K[3],
-    'gain-w1': -K[4],
-    'gain-w2': -K[5],
-  };
-}
+import { SCENE_CART_PENDULUM, SCENE_MASS_SPRING, SCENE_ROTOR, SCENE_TANK } from './scenes';
 
 function node(
   id: string,
@@ -39,42 +26,35 @@ export function pendulumDocument(): SimDocument {
     Q: DEFAULT_DESIGN.Q.slice(),
     R: DEFAULT_DESIGN.R,
   };
-  let gains: Record<string, number> = {
-    'gain-x': 0,
-    'gain-dx': 0,
-    'gain-th1': 0,
-    'gain-w1': 0,
-    'gain-th2': 0,
-    'gain-w2': 0,
-  };
+  // Generic LQR roles: ki ← −Kᵢ, optional kref ← +K₀
+  let K = [0, 0, 0, 0, 0, 0];
   try {
-    const result = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, design.Q, design.R);
-    gains = regulatorGains(result.K);
+    K = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, design.Q, design.R).K;
   } catch (error) {
     console.warn(error);
   }
   const deg = 180 / Math.PI;
   const nodes: DocNode[] = [
     node('note-law', 'note', 16, 8, {
-      text: 'Plant is a mass-matrix ODE. State feedback u = −K (z − r) with z = [x  θ₁  θ₂  ẋ  ω₁  ω₂]',
+      text: 'Generic LQR roles: u = kref·r + Σ ki·zi with ki=−Ki, kref=+K0. Plant is a mass-matrix ODE.',
     }, 'Control law'),
     node('ref', 'constant', 16, 96, { value: 0 }, 'x ref'),
-    node('sum-x', 'sum', 132, 86, { signs: '+-' }, 'x error'),
-    node('gain-x', 'gain', 248, 93, { k: gains['gain-x'] }, 'Kx'),
-    node('gain-dx', 'gain', 248, 173, { k: gains['gain-dx'] }, '−Kẋ'),
-    node('gain-th1', 'gain', 248, 253, { k: gains['gain-th1'] }, '−Kθ₁'),
-    node('gain-w1', 'gain', 248, 333, { k: gains['gain-w1'] }, '−Kω₁'),
-    node('gain-th2', 'gain', 248, 413, { k: gains['gain-th2'] }, '−Kθ₂'),
-    node('gain-w2', 'gain', 248, 493, { k: gains['gain-w2'] }, '−Kω₂'),
-    node('sum-u', 'sum', 400, 268, { signs: '++++++' }, 'Σ u'),
+    node('kref', 'gain', 132, 93, { k: K[0] }, 'K₀ r'),
+    node('k0', 'gain', 248, 93, { k: -K[0] }, '−K₀ x'),
+    node('k3', 'gain', 248, 173, { k: -K[3] }, '−K₃ ẋ'),
+    node('k1', 'gain', 248, 253, { k: -K[1] }, '−K₁ θ₁'),
+    node('k4', 'gain', 248, 333, { k: -K[4] }, '−K₄ ω₁'),
+    node('k2', 'gain', 248, 413, { k: -K[2] }, '−K₂ θ₂'),
+    node('k5', 'gain', 248, 493, { k: -K[5] }, '−K₅ ω₂'),
+    node('sum-u', 'sum', 400, 268, { signs: '+++++++' }, 'Σ u'),
     node('sat', 'saturation', 553, 292, { upperLimit: 80, lowerLimit: -80 }, '|F| ≤ 80'),
     node('pulse', 'pulse', 553, 392, { amplitude: 16, delay: 8, width: 0.18, period: 0 }, 'Disturbance'),
     node('manual', 'manual', 553, 488, { value: 0, min: -25, max: 25 }, 'Hand force'),
     node('sum-f', 'sum', 685, 280, { signs: '+++' }, 'Σ F'),
-    node('plant', 'ode', 822, 217, { ...CART_DOUBLE_PENDULUM_ODE }, 'Cart double pendulum'),
-    node('stage', 'stage', 822, 430, { links: 2, l1: 0.4, l2: 0.4 }, 'Stage'),
+    node('plant', 'ode', 822, 217, { ...CART_DOUBLE_PENDULUM_ODE }, 'ODE plant'),
+    node('stage', 'stage', 822, 430, { ...SCENE_CART_PENDULUM, nudgePlant: 'plant' }, 'Stage'),
     node('note-plant', 'note', 822, 16, {
-      text: 'Dynamics come from the ODE mass matrix M(q)q̈ = rhs. Edit constants, M, or rhs to change the plant.',
+      text: 'All demo-specific behavior is data: ODE constants/M/rhs and Stage scene/nudge strings.',
     }),
     node('scope-cart', 'scope', 1188, 24, { inputCount: 2, timeSpan: 16, autoScale: true, yMin: -1, yMax: 1 }, 'Cart & force'),
     node('xy', 'xy', 1468, 24, { timeSpan: 16 }, 'θ₁ vs θ₂'),
@@ -85,20 +65,20 @@ export function pendulumDocument(): SimDocument {
   ];
 
   const edges = [
-    edge('ref', 'out', 'sum-x', 'in0'),
-    edge('plant', 'y0', 'sum-x', 'in1'),
-    edge('sum-x', 'out', 'gain-x', 'in'),
-    edge('plant', 'y3', 'gain-dx', 'in'),
-    edge('plant', 'y1', 'gain-th1', 'in'),
-    edge('plant', 'y4', 'gain-w1', 'in'),
-    edge('plant', 'y2', 'gain-th2', 'in'),
-    edge('plant', 'y5', 'gain-w2', 'in'),
-    edge('gain-x', 'out', 'sum-u', 'in0'),
-    edge('gain-dx', 'out', 'sum-u', 'in1'),
-    edge('gain-th1', 'out', 'sum-u', 'in2'),
-    edge('gain-w1', 'out', 'sum-u', 'in3'),
-    edge('gain-th2', 'out', 'sum-u', 'in4'),
-    edge('gain-w2', 'out', 'sum-u', 'in5'),
+    edge('ref', 'out', 'kref', 'in'),
+    edge('plant', 'y0', 'k0', 'in'),
+    edge('plant', 'y3', 'k3', 'in'),
+    edge('plant', 'y1', 'k1', 'in'),
+    edge('plant', 'y4', 'k4', 'in'),
+    edge('plant', 'y2', 'k2', 'in'),
+    edge('plant', 'y5', 'k5', 'in'),
+    edge('kref', 'out', 'sum-u', 'in0'),
+    edge('k0', 'out', 'sum-u', 'in1'),
+    edge('k3', 'out', 'sum-u', 'in2'),
+    edge('k1', 'out', 'sum-u', 'in3'),
+    edge('k4', 'out', 'sum-u', 'in4'),
+    edge('k2', 'out', 'sum-u', 'in5'),
+    edge('k5', 'out', 'sum-u', 'in6'),
     edge('sum-u', 'out', 'sat', 'in'),
     edge('sat', 'out', 'sum-f', 'in0'),
     edge('pulse', 'out', 'sum-f', 'in1'),
@@ -122,7 +102,7 @@ export function pendulumDocument(): SimDocument {
   return {
     name: 'Inverted double pendulum',
     description:
-      'A cart balances two pendulums with state feedback. The plant is a generic mass-matrix ODE — not a hard-coded pendulum block.',
+      'State feedback on a generic mass-matrix ODE plant, with a data-driven Stage scene — no demo-specific engine code.',
     config: { ...DEFAULT_CONFIG, stopTime: 16, stepSize: 0.001, solver: 'rk4', speed: 1, startTime: 0 },
     design,
     nodes,
@@ -145,6 +125,7 @@ export function oscillatorDocument(): SimDocument {
       node('spring', 'spring', 300, 300, { k: 1 }, 'Spring'),
       node('scope', 'scope', 500, 40, { inputCount: 2, timeSpan: 14, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'x and v'),
       node('meter', 'meter', 500, 292, { digits: 3 }, 'x'),
+      node('stage', 'stage', 680, 140, { ...SCENE_MASS_SPRING }, 'Stage'),
     ],
     edges: [
       edge('force', 'out', 'sum', 'in0'),
@@ -156,6 +137,8 @@ export function oscillatorDocument(): SimDocument {
       edge('mass', 'x', 'scope', 'in0'),
       edge('mass', 'v', 'scope', 'in1'),
       edge('mass', 'x', 'meter', 'in'),
+      edge('mass', 'x', 'stage', 'x'),
+      edge('mass', 'v', 'stage', 'v'),
     ],
   };
 }
@@ -225,8 +208,10 @@ export function motorDocument(): SimDocument {
       node('pid', 'pid', 280, 120, { Kp: 8, Ki: 25, Kd: 0.2, Tf: 0.02, limitOutput: true, upperLimit: 48, lowerLimit: -48 }, 'PID'),
       node('load', 'pulse', 280, 280, { amplitude: 0.05, delay: 4, width: 0.5, period: 0 }, 'Load pulse'),
       node('motor', 'dcmotor', 460, 150, { R: 1, L: 0.05, Kt: 0.1, Kb: 0.1, J: 0.02, b: 0.05 }, 'DC motor'),
+      node('angle', 'integrator', 460, 280, { initialCondition: 0 }, 'θ = ∫ω'),
       node('scope', 'scope', 680, 40, { inputCount: 2, timeSpan: 8, autoScale: true, yMin: -1, yMax: 6 }, 'Ref & ω'),
       node('meter', 'meter', 680, 280, { digits: 3 }, 'ω'),
+      node('stage', 'stage', 860, 140, { ...SCENE_ROTOR }, 'Stage'),
     ],
     edges: [
       edge('ref', 'out', 'sum', 'in0'),
@@ -234,9 +219,12 @@ export function motorDocument(): SimDocument {
       edge('sum', 'out', 'pid', 'in'),
       edge('pid', 'out', 'motor', 'Va'),
       edge('load', 'out', 'motor', 'TL'),
+      edge('motor', 'w', 'angle', 'in'),
       edge('ref', 'out', 'scope', 'in0'),
       edge('motor', 'w', 'scope', 'in1'),
       edge('motor', 'w', 'meter', 'in'),
+      edge('angle', 'out', 'stage', 'theta'),
+      edge('motor', 'T', 'stage', 'torque'),
     ],
   };
 }
@@ -256,6 +244,7 @@ export function pneumaticDocument(): SimDocument {
       node('tank', 'pneumatic_tank', 380, 160, { C: 0.05, p0: 1 }, 'Tank'),
       node('scope', 'scope', 560, 48, { inputCount: 2, timeSpan: 10, autoScale: true, yMin: 0, yMax: 5.5 }, 'p & q'),
       node('meter', 'meter', 560, 280, { digits: 3 }, 'p'),
+      node('stage', 'stage', 740, 140, { ...SCENE_TANK }, 'Stage'),
     ],
     edges: [
       edge('supply', 'out', 'valve', 'p1'),
@@ -266,6 +255,8 @@ export function pneumaticDocument(): SimDocument {
       edge('tank', 'p', 'scope', 'in0'),
       edge('valve', 'q', 'scope', 'in1'),
       edge('tank', 'p', 'meter', 'in'),
+      edge('tank', 'p', 'stage', 'level'),
+      edge('valve', 'q', 'stage', 'flow'),
     ],
   };
 }

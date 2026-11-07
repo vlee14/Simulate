@@ -1061,8 +1061,15 @@ export function blockSummary(def: BlockDefinition, parameters: Record<string, Pa
     case 'outport':
     case 'subsystem':
       return ioSummary(def.type, parameters);
-    case 'stage':
-      return text(parameters, 'visual', 'cart-pendulum');
+    case 'stage': {
+      const trail = text(parameters, 'trail', '');
+      const ports = text(parameters, 'inputs', '')
+        .split(',')
+        .map((part) => part.trim().split(':')[0])
+        .filter(Boolean);
+      if (trail) return `trail ${trail}`;
+      return ports.length ? ports.slice(0, 3).join(',') : 'scene';
+    }
     default:
       return '';
   }

@@ -19,15 +19,3 @@ export const CART_DOUBLE_PENDULUM_ODE = {
   x0: '0 0.18 -0.12 0 0 0',
   dx: 'x2; -x1',
 } as const;
-
-export function cartPendulumLengths(constants: string): { l1: number; l2: number } {
-  const values: Record<string, number> = {};
-  for (const part of constants.split(/[;\n]+/)) {
-    const eq = part.indexOf('=');
-    if (eq <= 0) continue;
-    const key = part.slice(0, eq).trim();
-    const value = Number(part.slice(eq + 1).trim());
-    if (Number.isFinite(value)) values[key] = value;
-  }
-  return { l1: values.l1 ?? 0.4, l2: values.l2 ?? 0.4 };
-}
