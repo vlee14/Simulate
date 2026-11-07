@@ -274,7 +274,8 @@ export const PLANT_RECIPES: PlantRecipe[] = [
             Iyy: unc('percent', 7502, 15),
           }
         ),
-        n('stage', 'stage', origin, 600, 100, { ...SCENE_QUAD }, 'Stage'),
+        n('noseang', 'fcn', origin, 600, 220, { expr: 'u1+1.57079632679' }, 'nose ∠'),
+        n('stage', 'stage', origin, 780, 100, { ...SCENE_QUAD }, 'Stage'),
       ],
       edges: [
         e('hover', 'out', 'tsum', 'in0'),
@@ -284,6 +285,8 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         e('plant', 'y0', 'stage', 'x'),
         e('plant', 'y1', 'stage', 'z'),
         e('plant', 'y4', 'stage', 'theta'),
+        e('plant', 'y4', 'noseang', 'u1'),
+        e('noseang', 'out', 'stage', 'nose'),
         e('plant', 'y6', 'stage', 'xt'),
         e('plant', 'y7', 'stage', 'zt'),
         e('tsum', 'out', 'stage', 'thrust'),

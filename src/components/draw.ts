@@ -58,18 +58,34 @@ export function drawStage(canvas: HTMLCanvasElement, view: StageView): StageCame
   const groundY = worldToCanvas(camera, 0, 0).y;
   const poses = new Map<string, Pose>();
 
-  // Trail under elements
+  // Short faded trail near the subject so history does not pull the eye off-center.
   if (view.trail.length > 1) {
-    ctx.beginPath();
-    view.trail.forEach((point, index) => {
-      const px = toX(point.x);
-      const py = toY(point.y);
-      if (index === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    });
-    ctx.strokeStyle = 'rgba(94, 200, 255, 0.45)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    const maxPts = 70;
+    const trail = view.trail.length > maxPts ? view.trail.slice(view.trail.length - maxPts) : view.trail;
+    const pad = 40;
+    for (let i = 1; i < trail.length; i++) {
+      const a = trail[i - 1];
+      const b = trail[i];
+      const x0 = toX(a.x);
+      const y0 = toY(a.y);
+      const x1 = toX(b.x);
+      const y1 = toY(b.y);
+      if (
+        (x0 < -pad && x1 < -pad) ||
+        (x0 > w + pad && x1 > w + pad) ||
+        (y0 < -pad && y1 < -pad) ||
+        (y0 > h + pad && y1 > h + pad)
+      ) {
+        continue;
+      }
+      const alpha = 0.12 + 0.4 * (i / trail.length);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.strokeStyle = `rgba(94, 200, 255, ${alpha.toFixed(3)})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
 
   for (const element of view.config.elements) {
@@ -242,7 +258,8 @@ function drawElement(
     ctx.strokeStyle = force >= 0 ? '#e7a23a' : '#ff6b8a';
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = 2;
-    const y = groundY + 28;
+    // Prefer just under the look/subject center; fall back below ground when it is on-screen.
+    const y = groundY > 8 && groundY < h - 8 ? groundY + 28 : h * 0.72;
     ctx.beginPath();
     ctx.moveTo(originX, y);
     ctx.lineTo(originX + arrow, y);

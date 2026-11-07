@@ -213,7 +213,7 @@ export class SimulationEngine {
               telemetry.trails.set(block.id, trail);
             }
             trail.push(tip);
-            if (trail.length > 360) trail.shift();
+            if (trail.length > 120) trail.shift();
           }
         }
       }

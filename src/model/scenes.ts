@@ -83,8 +83,9 @@ export const SCENE_MASS_SPRING = {
 
 /** Side-view Stage for planar quadrotor chase (interceptor + target). */
 export const SCENE_QUAD = {
-  inputs: 'x:mechanical,z:mechanical,theta:mechanical,xt:mechanical,zt:mechanical,thrust:mechanical',
-  scale: 42,
+  // `nose` is θ+π/2 so the link (pendulum-style from vertical) reads as a level fuselage at θ=0.
+  inputs: 'x:mechanical,z:mechanical,theta:mechanical,nose:mechanical,xt:mechanical,zt:mechanical,thrust:mechanical',
+  scale: 56,
   trail: 'quad',
   nudgePlant: 'plant',
   nudge: 'Pitch+|5|0.8; Pitch−|5|-0.8',
@@ -95,8 +96,8 @@ export const SCENE_QUAD = {
   scene: JSON.stringify([
     { type: 'ground' },
     { type: 'box', id: 'tgt', x: '$xt', y: '$zt', w: 0.5, h: 0.16, color: '#e76f51' },
-    { type: 'box', id: 'quad', x: '$x', y: '$z', w: 0.65, h: 0.14, color: '#5ec8ff' },
-    { type: 'link', id: 'nose', from: 'quad', angle: '$theta', length: 0.38, color: '#e7a23a' },
+    { type: 'box', id: 'quad', x: '$x', y: '$z', w: 0.7, h: 0.16, color: '#5ec8ff' },
+    { type: 'link', id: 'nose', from: 'quad', angle: '$nose', length: 0.42, color: '#e7a23a' },
     { type: 'arrow', value: '$thrust' },
   ]),
 } as const;
