@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
 import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
-import { AnalysisOption, LinearizationPoint, Param, ParamSpec } from '../engine/types';
+import { describeDraw, DIST_OPTIONS, drawNumeric } from '../engine/montecarlo';
+import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
 import { analyzeController, captureLinearizationPoint, computeLqr, resetSim } from '../sim/controller';
@@ -57,6 +58,7 @@ function ModelPane() {
   const config = useStore((state) => state.config);
   const setConfig = useStore((state) => state.setConfig);
   const setMeta = useStore((state) => state.setMeta);
+  const mcRun = config.mcRun ?? 0;
   return (
     <div className="pane">
       <h2>Document</h2>
@@ -88,6 +90,22 @@ function ModelPane() {
           ))}
         </select>
       </label>
+      <h3>Monte Carlo</h3>
+      <NumberField
+        label="Simulation run"
+        help="0 = nominal values. n>0 draws each distributed parameter from its fixed seed (same run ⇒ same draws)."
+        value={mcRun}
+        step={1}
+        onCommit={(value) => setConfig({ mcRun: Math.max(0, Math.round(value)) })}
+      />
+      <div className="design-actions">
+        <button type="button" className="ghost" onClick={() => setConfig({ mcRun: 0 })}>
+          Nominal (0)
+        </button>
+        <button type="button" className="ghost" onClick={() => setConfig({ mcRun: mcRun + 1 })}>
+          Next run
+        </button>
+      </div>
       <p className="hint">Initial conditions are read when you press Run. Gains and plant parameters update live.</p>
     </div>
   );
@@ -96,7 +114,9 @@ function ModelPane() {
 function BlockPane({ id, data }: { id: string; data: NodeData }) {
   const def = getBlock(data.blockType)!;
   const updateParam = useStore((state) => state.updateParam);
+  const updateUncertainty = useStore((state) => state.updateUncertainty);
   const updateAlias = useStore((state) => state.updateAlias);
+  const mcRun = useStore((state) => state.config.mcRun ?? 0);
   const groups = useMemo(() => {
     const map = new Map<string, ParamSpec[]>();
     for (const spec of def.parameters) {
@@ -121,7 +141,15 @@ function BlockPane({ id, data }: { id: string; data: NodeData }) {
         <section key={group}>
           <h3>{group}</h3>
           {specs.map((spec) => (
-            <ParamField key={spec.key} spec={spec} value={data.parameters[spec.key]} onCommit={(value) => updateParam(id, spec.key, value)} />
+            <ParamField
+              key={spec.key}
+              spec={spec}
+              value={data.parameters[spec.key]}
+              uncertainty={data.uncertainty?.[spec.key]}
+              mcRun={mcRun}
+              onCommit={(value) => updateParam(id, spec.key, value)}
+              onUncertainty={(patch) => updateUncertainty(id, spec.key, patch)}
+            />
           ))}
         </section>
       ))}
@@ -179,7 +207,21 @@ function ScopeMetrics({ id }: { id: string }) {
   );
 }
 
-function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param | undefined; onCommit: (value: Param) => void }) {
+function ParamField({
+  spec,
+  value,
+  uncertainty,
+  mcRun,
+  onCommit,
+  onUncertainty,
+}: {
+  spec: ParamSpec;
+  value: Param | undefined;
+  uncertainty?: ParamUncertainty;
+  mcRun: number;
+  onCommit: (value: Param) => void;
+  onUncertainty: (patch: { kind: DistKind; spread?: number } | null) => void;
+}) {
   if (spec.type === 'boolean') {
     return (
       <label className="check">
@@ -219,7 +261,46 @@ function ParamField({ spec, value, onCommit }: { spec: ParamSpec; value: Param |
       </label>
     );
   }
-  return <NumberField label={spec.label} help={spec.help} value={Number(value ?? 0)} step={spec.step} onCommit={onCommit} />;
+  const nominal = Number(value ?? 0);
+  const kind = uncertainty?.kind ?? 'none';
+  const drawn = kind !== 'none' ? drawNumeric(nominal, uncertainty, mcRun) : nominal;
+  return (
+    <div className="param-with-dist">
+      <NumberField label={spec.label} help={spec.help} value={nominal} step={spec.step} onCommit={onCommit} />
+      <div className="dist-row">
+        <label className="field compact">
+          <span>Distribution</span>
+          <select
+            value={kind}
+            onChange={(event) => {
+              const next = event.target.value as DistKind;
+              onUncertainty(next === 'none' ? null : { kind: next, spread: uncertainty?.spread });
+            }}
+          >
+            {DIST_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {kind !== 'none' ? (
+          <NumberField
+            label={kind === 'percent' ? '±%' : kind === 'uniform' ? 'Half-width' : 'σ'}
+            value={uncertainty?.spread ?? 0}
+            step={kind === 'percent' ? 1 : 0.01}
+            onCommit={(spread) => onUncertainty({ kind, spread: Math.max(0, spread) })}
+          />
+        ) : null}
+      </div>
+      {kind !== 'none' ? (
+        <p className="hint dist-hint">
+          seed {uncertainty?.seed ?? '—'} · {describeDraw(uncertainty, nominal, mcRun)}
+          {mcRun > 0 ? ` (sim uses ${drawn})` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function NumberField({

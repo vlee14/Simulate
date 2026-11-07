@@ -134,6 +134,16 @@ export const Toolbar: React.FC<{
             ))}
           </select>
         </label>
+        <label className="mini" title="Monte Carlo run · 0 = nominal">
+          MC
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={config.mcRun ?? 0}
+            onChange={(event) => setConfig({ mcRun: Math.max(0, Math.round(Number(event.target.value) || 0)) })}
+          />
+        </label>
         <button onClick={() => fitDiagram()}>Fit</button>
         <button className="save-desktop" onClick={() => saveLibrary()}>
           Save

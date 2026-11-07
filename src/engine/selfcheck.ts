@@ -10,6 +10,7 @@ import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
 import { parseStageConfig, stageTrailTip } from './scene';
 import { analyzeStability, parseVector } from './stability';
+import { applyMonteCarlo, drawNumeric, mixSeed, mulberry32 } from './montecarlo';
 import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
@@ -212,6 +213,37 @@ function main(): void {
   eng.reset();
   eng.step(0.01);
   close(eng.compiled!.byId.get('s')!.outputs.out, 2.5, 1e-9, 'sensor gain/bias');
+
+  // Monte Carlo: run 0 = nominal; seeded draws are stable per parameter seed.
+  const unc = { kind: 'normal' as const, seed: 0xc0ffee, spread: 0.5 };
+  close(drawNumeric(1, unc, 0), 1, 0, 'MC run 0 is nominal');
+  const d1 = drawNumeric(1, unc, 1);
+  const d1b = drawNumeric(1, unc, 1);
+  close(d1, d1b, 0, 'same seed+run ⇒ same draw');
+  assert(Math.abs(d1 - 1) > 1e-6, 'run 1 should differ from nominal (almost surely)');
+  const d2 = drawNumeric(1, unc, 2);
+  assert(Math.abs(d2 - d1) > 1e-12, 'different runs should differ');
+  const otherSeed = { ...unc, seed: 0xbadc0de };
+  assert(Math.abs(drawNumeric(1, otherSeed, 1) - d1) > 1e-12, 'different param seeds should differ');
+  // Graph apply: only numeric params with uncertainty change; run 0 untouched.
+  const mcNodes = [
+    {
+      id: 'mass',
+      blockType: 'mass',
+      parameters: { m: 1, x0: 0, v0: 0 } as Record<string, number>,
+      uncertainty: { m: unc },
+    },
+    { id: 'gain', blockType: 'gain', parameters: { k: 3 } as Record<string, number> },
+  ];
+  const nominalGraph = applyMonteCarlo(mcNodes, 0);
+  close(Number(nominalGraph[0].parameters.m), 1, 0, 'MC graph run 0 keeps m');
+  const run1 = applyMonteCarlo(mcNodes, 1);
+  close(Number(run1[0].parameters.m), d1, 1e-12, 'MC graph uses same draw as drawNumeric');
+  close(Number(run1[1].parameters.k), 3, 0, 'params without uncertainty stay nominal');
+  // RNG mix is deterministic
+  close(mixSeed(1, 1), mixSeed(1, 1), 0, 'mixSeed stable');
+  const u = mulberry32(1)();
+  assert(u >= 0 && u < 1, 'mulberry32 in [0,1)');
 
   console.log('selfcheck ok');
 }
