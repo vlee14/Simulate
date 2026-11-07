@@ -84,19 +84,19 @@ export const SCENE_MASS_SPRING = {
 /** Side-view Stage for planar quadrotor chase (interceptor + target). */
 export const SCENE_QUAD = {
   inputs: 'x:mechanical,z:mechanical,theta:mechanical,xt:mechanical,zt:mechanical,thrust:mechanical',
-  scale: 36,
+  scale: 42,
   trail: 'quad',
   nudgePlant: 'plant',
-  nudge: 'Pitch+|5|1.2; Pitch−|5|-1.2',
+  nudge: 'Pitch+|5|0.8; Pitch−|5|-0.8',
   readouts: 'x|x|number;z|z|number;θ|theta|deg;xt|xt|number',
   control: 'Alt bias|zbias|-2|2',
-  disturbance: 'Gust|pulse|gust|5',
-  interact: 'quad|nudge|5|0.8; *|control',
+  disturbance: 'Gust|pulse|gust|4',
+  interact: 'quad|nudge|5|0.6; *|control',
   scene: JSON.stringify([
     { type: 'ground' },
-    { type: 'box', id: 'tgt', x: '$xt', y: '$zt', w: 0.55, h: 0.18, color: '#e76f51' },
-    { type: 'box', id: 'quad', x: '$x', y: '$z', w: 0.7, h: 0.16, color: '#5ec8ff' },
-    { type: 'link', id: 'nose', from: 'quad', angle: '$theta', length: 0.42, color: '#e7a23a' },
+    { type: 'box', id: 'tgt', x: '$xt', y: '$zt', w: 0.5, h: 0.16, color: '#e76f51' },
+    { type: 'box', id: 'quad', x: '$x', y: '$z', w: 0.65, h: 0.14, color: '#5ec8ff' },
+    { type: 'link', id: 'nose', from: 'quad', angle: '$theta', length: 0.38, color: '#e7a23a' },
     { type: 'arrow', value: '$thrust' },
   ]),
 } as const;

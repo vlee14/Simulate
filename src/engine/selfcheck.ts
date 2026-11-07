@@ -379,15 +379,18 @@ function main(): void {
   const quadStage = quad.nodes.find((n) => n.blockType === 'stage');
   assert(!!parseStageConfig(quadStage?.parameters ?? {}).control, 'quad Stage control parses');
   assert(!!SCENE_QUAD.disturbance, 'quad Stage disturbance defined');
-  const quadEngine = runEngine(quad, 2.5);
+  const quadEngine = runEngine(quad, 6);
   const plantOut = quadEngine.compiled!.byId.get('plant')!;
   const xi = plantOut.outputs.y0;
+  const zi = plantOut.outputs.y1;
   const xt = plantOut.outputs.y6;
   assert(Number.isFinite(xi) && Number.isFinite(xt), 'quad states finite');
-  // Closing: interceptor should move toward inbound target (x increases from 0)
-  assert(xi > 0.5, `PN chase should advance interceptor x, got ${xi}`);
+  assert(xi > 1, `PN chase should advance interceptor x, got ${xi}`);
+  assert(Math.abs(zi) < 12 && Math.abs(xi) < 20, `quad should stay bounded, x=${xi} z=${zi}`);
+  const range = Math.hypot(xt - xi, plantOut.outputs.y7 - zi);
+  assert(range < 8, `range should close under PN, R=${range}`);
   const pn = quadEngine.compiled!.byId.get('pn')!;
-  assert(Number.isFinite(pn.outputs.acmd), 'PN a_cmd finite');
+  assert(Number.isFinite(pn.outputs.acmd) && Math.abs(pn.outputs.acmd) < 20, 'PN a_cmd finite/clamped');
   assert(QUADROTOR_ODE.nx === 10 && QUADROTOR_ODE.nu === 2, 'quad ODE size');
 
   // Lab suite: experiments, sensitivity, synthesis, share, history, observer/kalman.

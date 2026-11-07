@@ -28,8 +28,8 @@ export const QUADROTOR_ODE = {
   M: '1, 0; 0, 1',
   rhs: '0; 0',
   y: 'x1; x2; x3; x4; x5; x6; x7; x8; x9; x10',
-  // Interceptor near hover with slight forward speed; target crosses above inbound.
-  x0: '0 2 1.2 0 0 0 12 5 -1.6 -0.35',
+  // Interceptor near hover with forward speed; target crosses above, slower closing.
+  x0: '0 2.2 1.5 0 0 0 11 4.5 -1.2 -0.2',
 } as const;
 
 export const CART_DOUBLE_PENDULUM_ODE = {

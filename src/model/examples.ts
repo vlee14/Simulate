@@ -442,8 +442,8 @@ export function quadrotorDocument(): SimDocument {
     name: 'Quadrotor Pro-Nav chase',
     description:
       'Planar quadrotor with 3-loop architecture: outer true Pro-Nav guidance, mid pitch attitude, inner pitch-rate; parallel altitude hold. MC on m/Iyy. Stage: alt bias / gust / pitch nudges.',
-    config: mcConfig({ stepSize: 0.002, stopTime: 10, mcCampaignSize: 800, mcOverlayCount: 64 }),
-    design: designConfig({ Q: [4, 8, 1, 2, 20, 4], R: 0.4 }),
+    config: mcConfig({ stepSize: 0.002, stopTime: 8, mcCampaignSize: 500, mcOverlayCount: 48 }),
+    design: designConfig({ Q: [4, 8, 1, 2, 20, 4], R: 0.4, analysis: ['poles', 'bode'] }),
     nodes: [
       node('note', 'note', 16, 8, {
         text:
@@ -457,12 +457,12 @@ export function quadrotorDocument(): SimDocument {
       node('vrz', 'sum', 16, 420, { signs: '+-' }, 'vrz'),
 
       // —— Outer loop: proportional navigation ——
-      node('pn', 'pronav', 200, 200, { N: 4, eps: 0.12 }, 'Pro Nav', 'guidance', {
-        N: unc('percent', 8101, 12),
+      node('pn', 'pronav', 200, 200, { N: 3.2, eps: 0.2, aMax: 4.5, fadeRange: 2 }, 'Pro Nav', 'guidance', {
+        N: unc('percent', 8101, 10),
       }),
       // θ_cmd from desired horizontal accel: a_x ≈ −g θ  ⇒  θ ≈ −ax/g
       node('thcmd', 'fcn', 360, 140, { expr: '-u1/9.81' }, 'θ_cmd ≈ −ax/g'),
-      node('thsat', 'saturation', 500, 140, { upperLimit: 0.55, lowerLimit: -0.55 }, 'θ_cmd sat'),
+      node('thsat', 'saturation', 500, 140, { upperLimit: 0.4, lowerLimit: -0.4 }, 'θ_cmd sat'),
 
       // —— Mid loop: attitude ——
       node('eth', 'sum', 640, 132, { signs: '+-' }, 'eθ'),
@@ -471,7 +471,7 @@ export function quadrotorDocument(): SimDocument {
         'pid',
         780,
         140,
-        { Kp: 8, Ki: 0.2, Kd: 1.2, Tf: 0.03, limitOutput: true, upperLimit: 5, lowerLimit: -5 },
+        { Kp: 7, Ki: 0.15, Kd: 1.0, Tf: 0.04, limitOutput: true, upperLimit: 3.5, lowerLimit: -3.5 },
         'Attitude PID'
       ),
 
@@ -482,10 +482,10 @@ export function quadrotorDocument(): SimDocument {
         'pid',
         1080,
         140,
-        { Kp: 3.2, Ki: 0, Kd: 0.04, Tf: 0.02, limitOutput: true, upperLimit: 3, lowerLimit: -3 },
+        { Kp: 2.8, Ki: 0, Kd: 0.03, Tf: 0.02, limitOutput: true, upperLimit: 2.2, lowerLimit: -2.2 },
         'Rate PID'
       ),
-      node('tausat', 'saturation', 1240, 140, { upperLimit: 3, lowerLimit: -3 }, 'τ sat'),
+      node('tausat', 'saturation', 1240, 140, { upperLimit: 2.2, lowerLimit: -2.2 }, 'τ sat'),
 
       // —— Altitude: hover + PN az feedforward + track target z ——
       node('zbias', 'manual', 200, 420, { value: 0, min: -2, max: 2 }, 'Alt bias'),
@@ -496,14 +496,15 @@ export function quadrotorDocument(): SimDocument {
         'pid',
         640,
         408,
-        { Kp: 10, Ki: 5, Kd: 5, Tf: 0.04, limitOutput: true, upperLimit: 10, lowerLimit: -10 },
+        { Kp: 6, Ki: 2.5, Kd: 3.5, Tf: 0.05, limitOutput: true, upperLimit: 6, lowerLimit: -6 },
         'Altitude PID'
       ),
       node('azff', 'fcn', 640, 520, { expr: '1.2*u1' }, 'm·az FF'),
-      node('hover', 'constant', 780, 560, { value: hoverT }, 'mg hover'),
-      node('gust', 'pulse', 900, 560, { amplitude: 5, delay: 1e9, width: 0.25, period: 0 }, 'Gust'),
+      node('azsat', 'saturation', 780, 520, { upperLimit: 5, lowerLimit: -5 }, 'az FF sat'),
+      node('hover', 'constant', 780, 600, { value: hoverT }, 'mg hover'),
+      node('gust', 'pulse', 900, 600, { amplitude: 4, delay: 1e9, width: 0.25, period: 0 }, 'Gust'),
       node('tsum', 'sum', 900, 420, { signs: '++++' }, 'Σ T'),
-      node('tsat', 'saturation', 1060, 420, { upperLimit: 30, lowerLimit: 2 }, 'T sat'),
+      node('tsat', 'saturation', 1060, 420, { upperLimit: 22, lowerLimit: 4 }, 'T sat'),
 
       // —— Plant: planar quadrotor + target ——
       node(
@@ -564,8 +565,9 @@ export function quadrotorDocument(): SimDocument {
       edge('plant', 'y1', 'ez', 'in1'),
       edge('ez', 'out', 'alt', 'in'),
       edge('pn', 'az', 'azff', 'u1'),
+      edge('azff', 'out', 'azsat', 'in'),
       edge('alt', 'out', 'tsum', 'in0'),
-      edge('azff', 'out', 'tsum', 'in1'),
+      edge('azsat', 'out', 'tsum', 'in1'),
       edge('hover', 'out', 'tsum', 'in2'),
       edge('gust', 'out', 'tsum', 'in3'),
       edge('tsum', 'out', 'tsat', 'in'),
