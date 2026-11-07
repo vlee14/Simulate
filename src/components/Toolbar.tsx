@@ -134,7 +134,10 @@ export const Toolbar: React.FC<{
             ))}
           </select>
         </label>
-        <label className="mini" title="Monte Carlo run · 0 = nominal">
+        <label
+          className="mini"
+          title="Monte Carlo run · 0 = nominal · open Document pane for run-count recommendations from # of uncertain parameters"
+        >
           MC
           <input
             type="number"

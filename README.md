@@ -124,7 +124,7 @@ Use **Plant builder** in the library to insert wired recipes (plant + actuators 
 
 The **Design** pane linearizes a Dynamics plant about a chosen operating point (equilibrium, plant x₀, live state, or a custom breakpoint), then runs selectable stability reports — eigenvalues, controllability, damping/ωₙ, gain/phase margins, pole map, **Bode**, **Nyquist**, **Nichols**, and **root locus** — and can apply LQR onto gain roles `k0…` / `kref`.
 
-**Monte Carlo**: numeric plant/sensor/actuator parameters can each carry a distribution (normal, uniform, percent, lognormal). Enabling a distribution assigns a stable per-parameter seed, so the same simulation run index always redraws the same value for that parameter even if other blocks are added or removed. **Run 0** is always the nominal (typed) values.
+**Monte Carlo**: numeric plant/sensor/actuator parameters can each carry a distribution (normal, uniform, percent, lognormal). Enabling a distribution assigns a stable per-parameter seed, so the same simulation run index always redraws the same value for that parameter even if other blocks are added or removed. **Run 0** is always the nominal (typed) values. The Document pane recommends campaign size from the number of uncertain parameters *p*: explore ≥ 10*p*, mean stats ≥ 50*p*, tails ≥ 100*p*.
 
 ---
 

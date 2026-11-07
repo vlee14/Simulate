@@ -532,6 +532,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 11px;
 }
+.mc-advice {
+  margin: 10px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.mc-advice .lede {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
 .field span { color: var(--muted); }
 .field em { color: var(--faint); font-style: normal; font-size: 11px; }
 .field input, .field select, .field textarea { width: 100%; height: auto; }

@@ -10,7 +10,7 @@ import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
 import { parseStageConfig, stageTrailTip } from './scene';
 import { analyzeStability, parseVector } from './stability';
-import { applyMonteCarlo, drawNumeric, mixSeed, mulberry32 } from './montecarlo';
+import { applyMonteCarlo, countUncertainParams, drawNumeric, mixSeed, mulberry32, recommendMcRuns } from './montecarlo';
 import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
@@ -244,6 +244,17 @@ function main(): void {
   close(mixSeed(1, 1), mixSeed(1, 1), 0, 'mixSeed stable');
   const u = mulberry32(1)();
   assert(u >= 0 && u < 1, 'mulberry32 in [0,1)');
+
+  close(countUncertainParams(mcNodes), 1, 0, 'one uncertain param counted');
+  const noneAdvice = recommendMcRuns(0);
+  assert(noneAdvice.recommended === 0, 'no-params recommendation is 0');
+  const three = recommendMcRuns(3);
+  close(three.explore, 30, 0, 'explore = 10p');
+  close(three.mean, 150, 0, 'mean = 50p');
+  close(three.tails, 500, 0, 'tails = max(500,100p)');
+  close(three.recommended, three.mean, 0, 'primary recommendation is mean tier');
+  const twenty = recommendMcRuns(20);
+  close(twenty.tails, 2000, 0, 'tails = 100p when larger than 500');
 
   console.log('selfcheck ok');
 }

@@ -107,6 +107,72 @@ export function describeDraw(unc: ParamUncertainty | undefined, nominal: number,
   return `run ${run} → ${formatNum(drawn)}`;
 }
 
+/** Count parameters that have an active (non-`none`) distribution. */
+export function countUncertainParams(nodes: GraphNode[]): number {
+  let n = 0;
+  for (const node of nodes) {
+    if (!node.uncertainty) continue;
+    for (const unc of Object.values(node.uncertainty)) {
+      if (unc && unc.kind !== 'none') n++;
+    }
+  }
+  return n;
+}
+
+export interface McRunRecommendation {
+  /** Number of distributed parameters. */
+  params: number;
+  /** Quick screening / smoke set (runs 1…N). */
+  explore: number;
+  /** Reasonable mean / variance estimate. */
+  mean: number;
+  /** Percentiles / tails / robust stats. */
+  tails: number;
+  /** Primary suggestion (mean tier). */
+  recommended: number;
+  summary: string;
+  detail: string;
+}
+
+/**
+ * Suggest how many distinct Monte Carlo runs (1…N) to execute.
+ * Run 0 is always nominal and is not counted in N.
+ *
+ * Rules of thumb (UQ / DOE practice):
+ * - explore ≈ max(10, 10·p)
+ * - mean    ≈ max(100, 50·p)
+ * - tails   ≈ max(500, 100·p)
+ */
+export function recommendMcRuns(paramCount: number): McRunRecommendation {
+  const p = Math.max(0, Math.floor(paramCount));
+  if (p <= 0) {
+    return {
+      params: 0,
+      explore: 0,
+      mean: 0,
+      tails: 0,
+      recommended: 0,
+      summary: 'No distributed parameters — Monte Carlo runs are optional.',
+      detail: 'Enable a distribution on numeric plant/sensor parameters to get a run-count recommendation.',
+    };
+  }
+  const explore = Math.max(10, 10 * p);
+  const mean = Math.max(100, 50 * p);
+  const tails = Math.max(500, 100 * p);
+  return {
+    params: p,
+    explore,
+    mean,
+    tails,
+    recommended: mean,
+    summary: `${p} uncertain parameter${p === 1 ? '' : 's'} → try ~${mean} runs (1…${mean}) for mean stats.`,
+    detail:
+      `Rules of thumb from p = ${p}: explore ≥ ${explore} (10p), ` +
+      `mean/variance ≥ ${mean} (50p), tails/percentiles ≥ ${tails} (100p). ` +
+      `Run 0 stays nominal and is not part of the campaign.`,
+  };
+}
+
 function formatNum(value: number): string {
   if (!Number.isFinite(value)) return '—';
   const abs = Math.abs(value);

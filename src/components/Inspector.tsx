@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
 import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
-import { describeDraw, DIST_OPTIONS, drawNumeric } from '../engine/montecarlo';
+import { countUncertainParams, describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
 import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
 import { telemetry } from '../engine/telemetry';
-import { isEdge, NodeData } from '../model/elements';
+import { isEdge, NodeData, toGraph } from '../model/elements';
 import { analyzeController, captureLinearizationPoint, computeLqr, resetSim } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
@@ -56,9 +56,14 @@ function ModelPane() {
   const name = useStore((state) => state.name);
   const description = useStore((state) => state.description);
   const config = useStore((state) => state.config);
+  const elements = useStore((state) => state.elements);
   const setConfig = useStore((state) => state.setConfig);
   const setMeta = useStore((state) => state.setMeta);
   const mcRun = config.mcRun ?? 0;
+  const advice = useMemo(() => {
+    const graph = toGraph(elements);
+    return recommendMcRuns(countUncertainParams(graph.nodes));
+  }, [elements]);
   return (
     <div className="pane">
       <h2>Document</h2>
@@ -105,6 +110,51 @@ function ModelPane() {
         <button type="button" className="ghost" onClick={() => setConfig({ mcRun: mcRun + 1 })}>
           Next run
         </button>
+      </div>
+      <div className="mc-advice">
+        <p className="lede">{advice.summary}</p>
+        {advice.params > 0 ? (
+          <>
+            <ul className="gain-list">
+              <li>
+                <span>Uncertain params</span>
+                <span>{advice.params}</span>
+              </li>
+              <li>
+                <span>Explore (10p)</span>
+                <span>1…{advice.explore}</span>
+              </li>
+              <li>
+                <span>Mean stats (50p)</span>
+                <span>1…{advice.mean}</span>
+              </li>
+              <li>
+                <span>Tails (100p)</span>
+                <span>1…{advice.tails}</span>
+              </li>
+            </ul>
+            <div className="design-actions">
+              <button type="button" className="ghost" onClick={() => setConfig({ mcRun: 1 })}>
+                Start run 1
+              </button>
+              <button type="button" className="ghost" onClick={() => setConfig({ mcRun: advice.recommended })}>
+                Jump to {advice.recommended}
+              </button>
+            </div>
+            <p className="hint">{advice.detail}</p>
+            {mcRun > 0 ? (
+              <p className="hint">
+                Progress vs mean tier: {Math.min(mcRun, advice.mean)} / {advice.mean}
+                {mcRun >= advice.mean ? ' · mean tier met' : ''}
+                {mcRun >= advice.tails ? ' · tails tier met' : ''}
+              </p>
+            ) : (
+              <p className="hint">You are on nominal (run 0). Use runs 1…N for the campaign.</p>
+            )}
+          </>
+        ) : (
+          <p className="hint">{advice.detail}</p>
+        )}
       </div>
       <p className="hint">Initial conditions are read when you press Run. Gains and plant parameters update live.</p>
     </div>
