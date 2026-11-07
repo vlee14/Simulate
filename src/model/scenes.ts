@@ -20,18 +20,19 @@ export const SCENE_CART_PENDULUM = {
 } as const;
 
 export const SCENE_ROTOR = {
-  inputs: 'theta:mechanical,torque:mechanical',
+  inputs: 'theta:mechanical,torque:mechanical,omega:mechanical',
   scale: 120,
   trail: 'tip',
-  nudge: '',
-  nudgePlant: '',
-  readouts: 'θ|theta|deg;T|torque|number',
-  control: '',
-  disturbance: '',
-  interact: '',
+  nudge: 'Spin+|1|2; Spin−|1|-2',
+  nudgePlant: 'motor',
+  readouts: 'θ|theta|deg;ω|omega|number;T|torque|number',
+  control: 'Va trim|manual|-12|12',
+  disturbance: 'Load kick|pulse|load|0.08',
+  interact: 'rotor|nudge|1|1.5; tip|nudge|1|-1.5; *|control',
   scene: JSON.stringify([
     { type: 'disk', id: 'rotor', x: 0, y: 0.4, radius: 0.35, angle: '$theta', color: '#5ec8ff' },
     { type: 'link', id: 'tip', from: 'rotor', angle: '$theta', length: 0.35, color: '#e7a23a' },
+    { type: 'arrow', value: '$torque' },
   ]),
 } as const;
 
@@ -42,9 +43,9 @@ export const SCENE_TANK = {
   nudge: '',
   nudgePlant: '',
   readouts: 'level|level|number;q|flow|number',
-  control: '',
-  disturbance: '',
-  interact: '',
+  control: 'Valve trim|manual|0|1',
+  disturbance: 'Burp open|pulse|burp|1',
+  interact: '*|control',
   scene: JSON.stringify([
     { type: 'tank', id: 'tank', x: 0, y: 0, w: 1.2, h: 1.6, value: '$level', capacity: 5, color: '#7ddea0' },
   ]),
@@ -77,5 +78,22 @@ export const SCENE_MASS_SPRING = {
   interact: 'm|nudge|0|0.15; *|control',
   scene: JSON.stringify([
     { type: 'springmass', id: 'm', x: '$x', color: '#e7a23a' },
+  ]),
+} as const;
+
+/** Compact Stage for the second-order PID demo (position readout + hand disturbance). */
+export const SCENE_SECOND_ORDER = {
+  inputs: 'y:signal,u:signal',
+  scale: 90,
+  trail: '',
+  nudge: 'Bump y|0|0.25',
+  nudgePlant: 'plant',
+  readouts: 'y|y|number;u|u|number',
+  control: 'Hand u|manual|-3|3',
+  disturbance: 'Kick|pulse|kick|2',
+  interact: '*|control',
+  scene: JSON.stringify([
+    { type: 'springmass', id: 'm', x: '$y', color: '#5ec8ff' },
+    { type: 'arrow', value: '$u' },
   ]),
 } as const;

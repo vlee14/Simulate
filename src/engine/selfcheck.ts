@@ -1,7 +1,16 @@
 import { PLANT_RECIPES } from '../model/builder';
-import { documentGraph, pendulumDocument, oscillatorDocument, motorDocument, pneumaticDocument } from '../model/examples';
+import {
+  documentGraph,
+  EXAMPLES,
+  harmonicDocument,
+  motorDocument,
+  oscillatorDocument,
+  pendulumDocument,
+  pidDocument,
+  pneumaticDocument,
+} from '../model/examples';
 import { CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
-import { SCENE_CART_PENDULUM } from '../model/scenes';
+import { SCENE_CART_PENDULUM, SCENE_ROTOR, SCENE_TANK } from '../model/scenes';
 import { compileExpression } from './expr';
 import { SimCompileError, compile } from './compile';
 import { eigenvalues } from './eig';
@@ -9,12 +18,11 @@ import { designDynamicsLqr, lqr } from './lqr';
 import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
 import { parseStageConfig, stageTrailTip } from './scene';
-import { analyzeStability, parseVector } from './stability';
+import { analyzeStability, logspace, parseVector } from './stability';
 import { frequencyResponseBatchCpu, packPlant } from './freqBatch';
 import { sampleMcRange } from './mcSample';
 import { applyMonteCarlo, countUncertainParams, drawNumeric, mixSeed, mulberry32, recommendMcRuns } from './montecarlo';
 import { aggregateCampaign, clampCampaignSize, percentile, pickOverlayRuns } from './mcStats';
-import { logspace } from './stability';
 import { expandGraph, stringifyBlueprint } from './subsystem';
 
 function assert(cond: boolean, message: string): void {
@@ -333,6 +341,26 @@ function main(): void {
   const batch = frequencyResponseBatchCpu(packed.slice(0, 3), [1, 0.5], ws);
   assert(batch.length === 3 * 32 * 4, 'CPU Bode batch shape');
   assert(Number.isFinite(batch[2]), 'CPU Bode mag finite');
+
+  // Demos ship with MC uncertainty + campaign defaults + Stage bindings.
+  for (const example of EXAMPLES) {
+    const demo = example.create();
+    const graph = documentGraph(demo);
+    const uncertain = countUncertainParams(graph.nodes);
+    assert(uncertain > 0, `${example.id} should enable Monte Carlo distributions`);
+    assert((demo.config.mcCampaignSize ?? 0) >= 500, `${example.id} should set an MC campaign size`);
+    assert(demo.design.analysis.includes('bode'), `${example.id} should enable Bode in Design`);
+  }
+  assert(!!SCENE_ROTOR.control && !!SCENE_ROTOR.disturbance, 'rotor Stage should expose control + disturbance');
+  assert(!!SCENE_TANK.control && !!SCENE_TANK.disturbance, 'tank Stage should expose control + disturbance');
+  const motorStage = motorDocument().nodes.find((n) => n.blockType === 'stage');
+  assert(!!parseStageConfig(motorStage?.parameters ?? {}).control, 'motor demo Stage control parses');
+  const pid = pidDocument();
+  assert(!!pid.nodes.find((n) => n.blockType === 'stage'), 'PID demo includes Stage');
+  const harm = harmonicDocument();
+  assert(!!harm.nodes.find((n) => n.blockType === 'secondorder'), 'harmonic demo uses second-order plant');
+  const osc = oscillatorDocument();
+  assert(countUncertainParams(documentGraph(osc).nodes) >= 3, 'mass-spring demo MC on m,c,k');
 
   console.log('selfcheck ok');
 }
