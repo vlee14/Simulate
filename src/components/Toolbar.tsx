@@ -22,6 +22,10 @@ export const Toolbar: React.FC<{
   const saveLibraryCopy = useStore((state) => state.saveLibraryCopy);
   const closeToHome = useStore((state) => state.closeToHome);
   const selectedIds = useStore((state) => state.selectedIds);
+  const canUndo = useStore((state) => state.canUndo);
+  const canRedo = useStore((state) => state.canRedo);
+  const undo = useStore((state) => state.undo);
+  const redo = useStore((state) => state.redo);
   const [menu, setMenu] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const running = status === 'running';
@@ -113,6 +117,12 @@ export const Toolbar: React.FC<{
           {running ? 'Pause' : status === 'paused' ? 'Resume' : 'Run'}
         </button>
         <button onClick={() => resetSim()}>Reset</button>
+        <button type="button" disabled={!canUndo} title="Undo (Ctrl+Z)" onClick={() => undo()}>
+          Undo
+        </button>
+        <button type="button" disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" onClick={() => redo()}>
+          Redo
+        </button>
         <div className="clock">{formatTime(time)}</div>
       </div>
 

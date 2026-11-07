@@ -4,11 +4,17 @@ import {
   EXAMPLES,
   harmonicDocument,
   motorDocument,
+  observerDocument,
   oscillatorDocument,
   pendulumDocument,
   pidDocument,
   pneumaticDocument,
 } from '../model/examples';
+import { runExperiment } from './experiments';
+import { encodeDocumentShare, decodeDocumentShare, traceToCsv } from './exportShare';
+import { HistoryStack } from '../sim/history';
+import { runSensitivity } from './sensitivity';
+import { parsePoleList, placePolesSiso, tunePidImc } from './synthesis';
 import { CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
 import { SCENE_CART_PENDULUM, SCENE_ROTOR, SCENE_TANK } from '../model/scenes';
 import { compileExpression } from './expr';
@@ -361,6 +367,73 @@ function main(): void {
   assert(!!harm.nodes.find((n) => n.blockType === 'secondorder'), 'harmonic demo uses second-order plant');
   const osc = oscillatorDocument();
   assert(countUncertainParams(documentGraph(osc).nodes) >= 3, 'mass-spring demo MC on m,c,k');
+
+  // Lab suite: experiments, sensitivity, synthesis, share, history, observer/kalman.
+  const obsDoc = observerDocument();
+  assert(!!obsDoc.nodes.find((n) => n.blockType === 'observer'), 'observer demo has Luenberger');
+  assert(!!obsDoc.nodes.find((n) => n.blockType === 'kalman'), 'observer demo has Kalman');
+  const obsEngine = runEngine(obsDoc, 1.5);
+  const obsBlock = obsEngine.compiled!.byId.get('obs')!;
+  assert(Number.isFinite(obsBlock.outputs.x0), 'observer x̂0 finite');
+  const kfBlock = obsEngine.compiled!.byId.get('kf')!;
+  assert(Number.isFinite(kfBlock.outputs.x0), 'kalman x̂0 finite');
+
+  const pidGraph = documentGraph(pidDocument());
+  const exp = runExperiment(pidGraph.nodes, pidGraph.edges, pidDocument().config, {
+    kind: 'step',
+    outputBlock: 'plant',
+    outputPort: 'y',
+    inputBlock: 'ref',
+    stopTime: 4,
+    stepSize: 0.005,
+    mcRuns: 8,
+  });
+  assert(exp.nominal.trace.t.length > 10, 'experiment trace length');
+  assert(!!exp.envelope && exp.envelope.p50.length > 5, 'experiment MC envelope');
+  assert(traceToCsv(exp.nominal.trace.t, exp.nominal.trace.y).includes('\n'), 'CSV export');
+
+  const sens = runSensitivity(pidGraph.nodes, pidGraph.edges, pidDocument().config, {
+    outputBlock: 'plant',
+    outputPort: 'y',
+    inputBlock: 'ref',
+    kind: 'step',
+    metric: 'settlingTime',
+  });
+  assert(sens.tornado.length >= 1, 'tornado has bars');
+  assert(sens.sobolFirst.length >= 1, 'sobol proxy ranks');
+
+  const poles = parsePoleList('-2 -3');
+  assert(poles.length === 2, 'parse real poles');
+  const place = placePolesSiso(
+    [
+      [0, 1],
+      [-2, -0.8],
+    ],
+    [[0], [1]],
+    poles
+  );
+  assert(place.K.length === 2, 'Ackermann K length');
+  assert(place.polesClosed.every((p) => p.real < 0), 'placed poles stable');
+  const tuned = tunePidImc('secondorder', { wn: 2, zeta: 0.3, K: 1 });
+  assert(tuned.Kp !== 0 && tuned.Ki !== 0, 'IMC PID gains');
+
+  const roundTrip = decodeDocumentShare(encodeDocumentShare(obsDoc));
+  assert(roundTrip.name === obsDoc.name && roundTrip.nodes.length === obsDoc.nodes.length, 'share encode round-trip');
+
+  const hist = new HistoryStack();
+  const snapA = {
+    elements: [],
+    name: 'A',
+    description: '',
+    config: { ...obsDoc.config },
+    design: { ...obsDoc.design!, Q: (obsDoc.design?.Q ?? []).slice(), analysis: (obsDoc.design?.analysis ?? []).slice() },
+  };
+  hist.push(snapA);
+  const snapB = { ...snapA, name: 'B' };
+  const undone = hist.undo(snapB);
+  assert(undone?.name === 'A', 'history undo');
+  const redone = hist.redo(undone!);
+  assert(redone?.name === 'B', 'history redo');
 
   console.log('selfcheck ok');
 }

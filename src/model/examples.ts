@@ -433,6 +433,83 @@ export function pneumaticDocument(): SimDocument {
   };
 }
 
+/** Luenberger observer + discrete Kalman on an uncertain second-order plant. */
+export function observerDocument(): SimDocument {
+  // Plant: ÿ + 2ζωẏ + ω²y = u  → companion A = [[0,1],[-ω²,-2ζω]], B=[[0],[1]], C=[1,0]
+  // Observer L chosen for faster error poles than plant.
+  return {
+    name: 'Observer & Kalman',
+    description:
+      'Second-order plant with Monte Carlo on ωn/ζ. Luenberger observer estimates (y,ẏ); discrete Kalman runs in parallel. Lab pane: step experiment + sensitivity.',
+    config: mcConfig({ stepSize: 0.002, stopTime: 8, mcCampaignSize: 800, mcOverlayCount: 64 }),
+    design: designConfig({ Q: [20, 4, 0, 0, 0, 0], R: 0.4 }),
+    nodes: [
+      node('note', 'note', 16, 8, {
+        text: 'Plant y vs observer x̂0 / Kalman x̂0. Design → Analyze MC. Lab → experiment / PID tune / share link.',
+      }),
+      node('ref', 'step', 16, 120, { stepTime: 0.2, initialValue: 0, finalValue: 1 }, 'u step'),
+      node(
+        'plant',
+        'secondorder',
+        200,
+        112,
+        { wn: 2, zeta: 0.35, K: 1, y0: 0, dy0: 0 },
+        'Plant',
+        'plant',
+        {
+          wn: unc('percent', 5101, 10),
+          zeta: unc('percent', 5102, 20),
+        }
+      ),
+      node(
+        'obs',
+        'observer',
+        420,
+        40,
+        {
+          A: '0 1; -4 -1.4',
+          B: '0; 1',
+          C: '1 0',
+          D: '0',
+          L: '4; 6',
+          x0: '0 0',
+        },
+        'Luenberger'
+      ),
+      node(
+        'kf',
+        'kalman',
+        420,
+        260,
+        {
+          A: '1 0.02; -0.08 0.972',
+          B: '0; 0.02',
+          C: '1 0',
+          D: '0',
+          Q: '1e-5 0; 0 1e-4',
+          R: '1e-3',
+          x0: '0 0',
+          sampleTime: 0.02,
+        },
+        'Kalman'
+      ),
+      node('scope', 'scope', 680, 80, { inputCount: 3, timeSpan: 8, autoScale: true, yMin: -0.2, yMax: 1.4 }, 'y / obs / KF'),
+      node('meter', 'meter', 680, 300, { digits: 3 }, 'y'),
+    ],
+    edges: [
+      edge('ref', 'out', 'plant', 'u'),
+      edge('plant', 'y', 'obs', 'y0'),
+      edge('ref', 'out', 'obs', 'u0'),
+      edge('plant', 'y', 'kf', 'y0'),
+      edge('ref', 'out', 'kf', 'u0'),
+      edge('plant', 'y', 'scope', 'in0'),
+      edge('obs', 'x0', 'scope', 'in1'),
+      edge('kf', 'x0', 'scope', 'in2'),
+      edge('plant', 'y', 'meter', 'in'),
+    ],
+  };
+}
+
 export function blankDocument(): SimDocument {
   return {
     name: 'Untitled',
@@ -491,6 +568,12 @@ export const EXAMPLES: ExampleTemplate[] = [
     name: 'Harmonic oscillator',
     summary: 'Uncertain −ω² gain — Design pole-cloud campaign.',
     create: harmonicDocument,
+  },
+  {
+    id: 'observer',
+    name: 'Observer & Kalman',
+    summary: 'Luenberger + discrete Kalman on an uncertain second-order plant.',
+    create: observerDocument,
   },
 ];
 

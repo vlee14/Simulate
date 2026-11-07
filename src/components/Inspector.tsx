@@ -11,6 +11,7 @@ import { MC_CAMPAIGN_MAX, MC_OVERLAY_MAX } from '../engine/mcStats';
 import { analyzeController, captureLinearizationPoint, computeLqr, resetSim, runSelectedMc, selectMcRun } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
+import { LabPane } from './LabPane';
 import { StabilityPlotGrid } from './StabilityPlots';
 
 const Q_LABELS = ['Q₁ (x₁)', 'Q₂ (x₂)', 'Q₃ (x₃)', 'Q₄ (x₄)', 'Q₅ (x₅)', 'Q₆ (x₆)'];
@@ -27,7 +28,7 @@ export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClos
   compact,
   onClose,
 }) => {
-  const [tab, setTab] = useState<'block' | 'design'>('block');
+  const [tab, setTab] = useState<'block' | 'design' | 'lab'>('block');
   const selectedIds = useStore((state) => state.selectedIds);
   const elements = useStore((state) => state.elements);
   const selected = elements.find((element) => element.id === selectedIds[0] && !isEdge(element));
@@ -43,12 +44,23 @@ export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClos
         <button className={tab === 'design' ? 'on' : ''} onClick={() => setTab('design')}>
           Design
         </button>
+        <button className={tab === 'lab' ? 'on' : ''} onClick={() => setTab('lab')}>
+          Lab
+        </button>
         <button type="button" className="drawer-close" onClick={onClose}>
           Close
         </button>
       </div>
       <div className="inspector-scroll">
-        {tab === 'design' ? <DesignPane /> : data && def && selected ? <BlockPane id={selected.id} data={data} /> : <ModelPane />}
+        {tab === 'lab' ? (
+          <LabPane />
+        ) : tab === 'design' ? (
+          <DesignPane />
+        ) : data && def && selected ? (
+          <BlockPane id={selected.id} data={data} />
+        ) : (
+          <ModelPane />
+        )}
       </div>
     </aside>
   );
@@ -243,7 +255,10 @@ function BlockPane({ id, data }: { id: string; data: NodeData }) {
               uncertainty={data.uncertainty?.[spec.key]}
               mcRun={mcRun}
               onCommit={(value) => updateParam(id, spec.key, value)}
-              onUncertainty={(patch) => updateUncertainty(id, spec.key, patch)}
+              onUncertainty={(patch) => {
+                useStore.getState().checkpoint();
+                updateUncertainty(id, spec.key, patch);
+              }}
             />
           ))}
         </section>
@@ -320,7 +335,14 @@ function ParamField({
   if (spec.type === 'boolean') {
     return (
       <label className="check">
-        <input type="checkbox" checked={value === true} onChange={(event) => onCommit(event.target.checked)} />
+        <input
+          type="checkbox"
+          checked={value === true}
+          onChange={(event) => {
+            useStore.getState().checkpoint();
+            onCommit(event.target.checked);
+          }}
+        />
         <span>{spec.label}</span>
       </label>
     );
@@ -329,7 +351,13 @@ function ParamField({
     return (
       <label className="field">
         <span>{spec.label}</span>
-        <select value={String(value ?? '')} onChange={(event) => onCommit(event.target.value)}>
+        <select
+          value={String(value ?? '')}
+          onChange={(event) => {
+            useStore.getState().checkpoint();
+            onCommit(event.target.value);
+          }}
+        >
           {spec.options?.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -340,21 +368,7 @@ function ParamField({
     );
   }
   if (spec.type === 'string') {
-    return (
-      <label className="field">
-        <span>{spec.label}</span>
-        {spec.wide ? (
-          <textarea
-            rows={spec.key === 'scene' ? 6 : spec.key === 'text' ? 4 : 2}
-            value={String(value ?? '')}
-            onChange={(event) => onCommit(event.target.value)}
-          />
-        ) : (
-          <input value={String(value ?? '')} onChange={(event) => onCommit(event.target.value)} />
-        )}
-        {spec.help ? <em>{spec.help}</em> : null}
-      </label>
-    );
+    return <StringParamField spec={spec} value={String(value ?? '')} onCommit={onCommit} />;
   }
   const nominal = Number(value ?? 0);
   const kind = uncertainty?.kind ?? 'none';
@@ -398,6 +412,47 @@ function ParamField({
   );
 }
 
+function StringParamField({
+  spec,
+  value,
+  onCommit,
+}: {
+  spec: ParamSpec;
+  value: string;
+  onCommit: (value: Param) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    if (text === value) return;
+    useStore.getState().checkpoint();
+    onCommit(text);
+  };
+  return (
+    <label className="field">
+      <span>{spec.label}</span>
+      {spec.wide ? (
+        <textarea
+          rows={spec.key === 'scene' ? 6 : spec.key === 'text' ? 4 : 2}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+        />
+      ) : (
+        <input
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+          }}
+        />
+      )}
+      {spec.help ? <em>{spec.help}</em> : null}
+    </label>
+  );
+}
+
 function NumberField({
   label,
   help,
@@ -422,8 +477,13 @@ function NumberField({
         onChange={(event) => setText(event.target.value)}
         onBlur={() => {
           const next = Number(text);
-          if (Number.isFinite(next)) onCommit(next);
-          else setText(formatInput(value));
+          if (!Number.isFinite(next)) {
+            setText(formatInput(value));
+            return;
+          }
+          if (next === value) return;
+          useStore.getState().checkpoint();
+          onCommit(next);
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') (event.target as HTMLInputElement).blur();

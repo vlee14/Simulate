@@ -8,9 +8,12 @@ import { formatPole } from '../engine/lqr';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, SimDocument } from '../model/document';
 import { edgeDefaults, isEdge, NodeData, toDocument, toElements } from '../model/elements';
 import { LibraryEntry, loadLibrary, persistLibrary } from '../model/library';
+import type { ExperimentResult } from '../engine/experiments';
 import type { CampaignProgress } from '../engine/mcCampaignRunner';
 import type { McCampaignStats, McRunSample } from '../engine/mcStats';
+import type { SensitivityReport } from '../engine/sensitivity';
 import type { StabilityReport } from '../engine/stability';
+import { historyStack, DocSnapshot } from '../sim/history';
 
 export interface DesignView {
   summary: string;
@@ -94,6 +97,32 @@ interface AppState {
   setAnimated: (animated: boolean) => void;
   applyGain: (id: string, value: number) => void;
   document: () => ReturnType<typeof toDocument>;
+  /** Push current doc onto the undo stack (call before a batch of edits). */
+  checkpoint: () => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  experimentResult: ExperimentResult | null;
+  sensitivityResult: SensitivityReport | null;
+  setExperimentResult: (result: ExperimentResult | null) => void;
+  setSensitivityResult: (result: SensitivityReport | null) => void;
+}
+
+function snapFrom(state: {
+  elements: Elements;
+  name: string;
+  description: string;
+  config: SimConfig;
+  design: DesignConfig;
+}): DocSnapshot {
+  return {
+    elements: state.elements,
+    name: state.name,
+    description: state.description,
+    config: state.config,
+    design: state.design,
+  };
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -121,8 +150,13 @@ export const useStore = create<AppState>((set, get) => ({
   rate: 0,
   message: 'Ready',
   errorIds: [],
+  canUndo: false,
+  canRedo: false,
+  experimentResult: null,
+  sensitivityResult: null,
 
   openModel: (model, documentId) => {
+    historyStack.clear();
     set((state) => ({
       view: 'editor',
       documentId,
@@ -147,6 +181,10 @@ export const useStore = create<AppState>((set, get) => ({
       rate: 0,
       message: model.name,
       errorIds: [],
+      canUndo: false,
+      canRedo: false,
+      experimentResult: null,
+      sensitivityResult: null,
     }));
   },
 
@@ -319,6 +357,7 @@ export const useStore = create<AppState>((set, get) => ({
   addBlock: (blockType, position) => {
     const def = getBlock(blockType);
     if (!def) return;
+    get().checkpoint();
     const node: Node = {
       id: uuid(),
       type: def.renderer,
@@ -333,6 +372,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   insertGraph: (nodes, edges) => {
+    get().checkpoint();
     const idMap = new Map<string, string>();
     const created: Node[] = [];
     for (const item of nodes) {
@@ -378,6 +418,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   connect: (connection) => {
     if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return;
+    get().checkpoint();
     set((state) => {
       const sourceNode = state.elements.find((element) => !isEdge(element) && element.id === connection.source);
       const targetNode = state.elements.find((element) => !isEdge(element) && element.id === connection.target);
@@ -421,6 +462,8 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   removeIds: (ids) => {
+    if (!ids.length) return;
+    get().checkpoint();
     const drop = new Set(ids);
     set((state) => ({
       elements: state.elements.filter((element) => {
@@ -438,7 +481,8 @@ export const useStore = create<AppState>((set, get) => ({
       elements: state.elements.map((element) => (isEdge(element) ? { ...element, animated } : element)),
     })),
 
-  applyGain: (id, value) =>
+  applyGain: (id, value) => {
+    get().checkpoint();
     set((state) => ({
       elements: state.elements.map((element) => {
         if (isEdge(element) || element.id !== id) return element;
@@ -446,12 +490,55 @@ export const useStore = create<AppState>((set, get) => ({
         return { ...element, data: { ...data, parameters: { ...data.parameters, k: value } } };
       }),
       dirty: true,
-    })),
+    }));
+  },
 
   document: () => {
     const state = get();
     return toDocument(state.elements, { name: state.name, description: state.description }, state.config, state.design);
   },
+
+  checkpoint: () => {
+    historyStack.push(snapFrom(get()));
+    set({ canUndo: historyStack.canUndo, canRedo: historyStack.canRedo });
+  },
+
+  undo: () => {
+    const state = get();
+    const prev = historyStack.undo(snapFrom(state));
+    if (!prev) return;
+    set({
+      elements: prev.elements,
+      name: prev.name,
+      description: prev.description,
+      config: prev.config,
+      design: prev.design,
+      dirty: true,
+      canUndo: historyStack.canUndo,
+      canRedo: historyStack.canRedo,
+      message: 'Undo',
+    });
+  },
+
+  redo: () => {
+    const state = get();
+    const next = historyStack.redo(snapFrom(state));
+    if (!next) return;
+    set({
+      elements: next.elements,
+      name: next.name,
+      description: next.description,
+      config: next.config,
+      design: next.design,
+      dirty: true,
+      canUndo: historyStack.canUndo,
+      canRedo: historyStack.canRedo,
+      message: 'Redo',
+    });
+  },
+
+  setExperimentResult: (experimentResult) => set({ experimentResult }),
+  setSensitivityResult: (sensitivityResult) => set({ sensitivityResult }),
 }));
 
 export function confirmClose(): boolean {
