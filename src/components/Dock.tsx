@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { pendulumEnergy, readPendulumParams } from '../engine/physics';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
+import { cartPendulumLengths } from '../model/plants';
 import { nudgePlant } from '../sim/controller';
 import { useStore } from '../store';
 import { COMPACT_LAYOUT, useMediaQuery } from '../ui';
@@ -11,9 +11,11 @@ export const Dock: React.FC = () => {
   const elements = useStore((state) => state.elements);
   const time = useStore((state) => state.time);
   const updateParam = useStore((state) => state.updateParam);
-  const plant = elements.find((element) => !isEdge(element) && (element.data as NodeData)?.blockType === 'pendulum');
+  const stage = elements.find((element) => !isEdge(element) && (element.data as NodeData)?.blockType === 'stage');
+  const plant = elements.find((element) => !isEdge(element) && (element.data as NodeData)?.blockType === 'ode');
   const manual = elements.find((element) => !isEdge(element) && (element.data as NodeData)?.blockType === 'manual');
-  const data = plant && !isEdge(plant) ? (plant.data as NodeData) : null;
+  const data = stage && !isEdge(stage) ? (stage.data as NodeData) : null;
+  const plantData = plant && !isEdge(plant) ? (plant.data as NodeData) : null;
   const manualData = manual && !isEdge(manual) ? (manual.data as NodeData) : null;
   const compact = useMediaQuery(COMPACT_LAYOUT);
   const [open, setOpen] = useState(() => (typeof window === 'undefined' ? true : !window.matchMedia(COMPACT_LAYOUT).matches));
@@ -30,33 +32,30 @@ export const Dock: React.FC = () => {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !data || !open) return;
-    const params = readPendulumParams(data.parameters);
-    const live = telemetry.latest.get(data ? plant!.id : '');
+    if (!canvas || !data || !open || !stage) return;
+    const live = telemetry.latest.get(stage.id);
+    const lengths =
+      plantData && typeof plantData.parameters.constants === 'string'
+        ? cartPendulumLengths(plantData.parameters.constants)
+        : { l1: Number(data.parameters.l1 ?? 0.4), l2: Number(data.parameters.l2 ?? 0.4) };
     drawStage(canvas, {
-      x: live?.x ?? Number(data.parameters.x0 ?? 0),
-      th1: live?.th1 ?? Number(data.parameters.th1_0 ?? 0),
-      th2: live?.th2 ?? Number(data.parameters.th2_0 ?? 0),
-      l1: params.l1,
-      l2: params.l2,
+      x: live?.x ?? 0,
+      th1: live?.th1 ?? 0,
+      th2: live?.th2 ?? 0,
+      l1: Number(data.parameters.l1 ?? lengths.l1),
+      l2: Number(data.parameters.l2 ?? lengths.l2),
       force: live?.force ?? 0,
-      trail: plant ? telemetry.trails.get(plant.id) ?? [] : [],
+      trail: telemetry.trails.get(stage.id) ?? [],
     });
-  }, [data, open, plant, tick]);
+  }, [data, open, plantData, stage, tick]);
 
-  const params = data ? readPendulumParams(data.parameters) : null;
-  const live = data && plant ? telemetry.latest.get(plant.id) : undefined;
-  const state = [
-    live?.x ?? Number(data?.parameters.x0 ?? 0),
-    live?.th1 ?? Number(data?.parameters.th1_0 ?? 0),
-    live?.th2 ?? Number(data?.parameters.th2_0 ?? 0),
-    live?.dx ?? Number(data?.parameters.dx0 ?? 0),
-    live?.w1 ?? Number(data?.parameters.w1_0 ?? 0),
-    live?.w2 ?? Number(data?.parameters.w2_0 ?? 0),
-  ];
-  const energy = params ? pendulumEnergy(state, params) : null;
-  if (!data || !params) return null;
+  if (!data || !stage) return null;
 
+  const live = telemetry.latest.get(stage.id);
+  const x = live?.x ?? 0;
+  const th1 = live?.th1 ?? 0;
+  const th2 = live?.th2 ?? 0;
+  const force = live?.force ?? 0;
   const manualValue = Number(manualData?.parameters.value ?? 0);
   const manualMin = Number(manualData?.parameters.min ?? -25);
   const manualMax = Number(manualData?.parameters.max ?? 25);
@@ -66,21 +65,20 @@ export const Dock: React.FC = () => {
       <div className="dock-bar">
         <button onClick={() => setOpen((value) => !value)}>{open ? 'Hide stage' : 'Show stage'}</button>
         <strong>Stage</strong>
-        <span>The cart has to drive underneath the links. Upright is the unstable equilibrium.</span>
+        <span>Visualization sink for cart–pendulum signals from any Dynamics plant.</span>
       </div>
-      {open && data && params ? (
+      {open ? (
         <div className="dock-body">
           <canvas ref={canvasRef} className="stage-canvas" />
           <div className="readouts">
             <div className="stats">
               <Stat label="t" value={`${time.toFixed(2)} s`} />
-              <Stat label="x" value={`${state[0].toFixed(3)} m`} />
-              <Stat label="θ₁" value={`${((state[1] * 180) / Math.PI).toFixed(2)}°`} />
-              <Stat label="θ₂" value={`${((state[2] * 180) / Math.PI).toFixed(2)}°`} />
-              <Stat label="F" value={`${(live?.force ?? 0).toFixed(2)} N`} />
-              <Stat label="Energy" value={`${energy ? energy.total.toFixed(3) : '—'} J`} />
+              <Stat label="x" value={`${x.toFixed(3)} m`} />
+              <Stat label="θ₁" value={`${((th1 * 180) / Math.PI).toFixed(2)}°`} />
+              <Stat label="θ₂" value={`${((th2 * 180) / Math.PI).toFixed(2)}°`} />
+              <Stat label="F" value={`${force.toFixed(2)} N`} />
             </div>
-            <p className="hint">Energy is measured from the upright rest position, so a balanced pendulum sits near zero.</p>
+            <p className="hint">Wire plant states into the Stage sink. Tip / shove nudges the ODE plant state.</p>
             {manual && manualData ? (
               <label className="slider">
                 <span>Hand force {manualValue.toFixed(1)} N</span>

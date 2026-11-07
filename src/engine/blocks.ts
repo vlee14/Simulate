@@ -1,5 +1,5 @@
+import { DOMAIN_BLOCKS, domainSummary } from './domains';
 import { compileExpression, expressionInputCount } from './expr';
-import { pendulumDerivatives, readPendulumParams } from './physics';
 import { BlockContext, BlockDefinition, Param, ParamSpec, PortDef } from './types';
 
 function num(p: Record<string, Param>, key: string, fallback = 0): number {
@@ -882,80 +882,6 @@ export const BLOCKS: BlockDefinition[] = [
     },
   },
   {
-    type: 'pendulum',
-    category: 'Plants',
-    name: 'Double Pendulum',
-    description: 'Cart with two inverted pendulums. Angles are measured from upright.',
-    renderer: 'plant',
-    defaultParameters: {
-      M: 1,
-      m1: 0.25,
-      m2: 0.25,
-      l1: 0.4,
-      l2: 0.4,
-      g: 9.81,
-      b: 0.15,
-      c1: 0.002,
-      c2: 0.002,
-      x0: 0,
-      th1_0: 0.18,
-      th2_0: -0.12,
-      dx0: 0,
-      w1_0: 0,
-      w2_0: 0,
-    },
-    parameters: [
-      numberField('M', 'Cart mass M (kg)', 'Masses', 0.05),
-      numberField('m1', 'Link 1 mass (kg)', 'Masses', 0.05),
-      numberField('m2', 'Link 2 mass (kg)', 'Masses', 0.05),
-      numberField('l1', 'Link 1 length (m)', 'Geometry', 0.05),
-      numberField('l2', 'Link 2 length (m)', 'Geometry', 0.05),
-      numberField('g', 'Gravity (m/s²)', 'Geometry', 0.1),
-      numberField('b', 'Cart friction', 'Damping', 0.01),
-      numberField('c1', 'Joint 1 damping', 'Damping', 0.001),
-      numberField('c2', 'Joint 2 damping', 'Damping', 0.001),
-      numberField('x0', 'Cart position x₀', 'Initial conditions', 0.05),
-      numberField('dx0', 'Cart velocity', 'Initial conditions', 0.05),
-      numberField('th1_0', 'θ₁ (rad)', 'Initial conditions', 0.01),
-      numberField('w1_0', 'ω₁ (rad/s)', 'Initial conditions', 0.05),
-      numberField('th2_0', 'θ₂ (rad)', 'Initial conditions', 0.01),
-      numberField('w2_0', 'ω₂ (rad/s)', 'Initial conditions', 0.05),
-    ],
-    hasDirectFeedthrough: noFeed,
-    ports: () => ({
-      inputs: [{ id: 'force', name: 'F' }],
-      outputs: [
-        { id: 'x', name: 'x' },
-        { id: 'dx', name: 'ẋ' },
-        { id: 'th1', name: 'θ₁' },
-        { id: 'w1', name: 'ω₁' },
-        { id: 'th2', name: 'θ₂' },
-        { id: 'w2', name: 'ω₂' },
-      ],
-    }),
-    continuousStates: () => 6,
-    discreteStates: none,
-    init: (ctx) => {
-      ctx.state[0] = num(ctx.parameters, 'x0', 0);
-      ctx.state[1] = num(ctx.parameters, 'th1_0', 0);
-      ctx.state[2] = num(ctx.parameters, 'th2_0', 0);
-      ctx.state[3] = num(ctx.parameters, 'dx0', 0);
-      ctx.state[4] = num(ctx.parameters, 'w1_0', 0);
-      ctx.state[5] = num(ctx.parameters, 'w2_0', 0);
-    },
-    outputs: (ctx) => {
-      ctx.outputs.x = ctx.state[0];
-      ctx.outputs.th1 = ctx.state[1];
-      ctx.outputs.th2 = ctx.state[2];
-      ctx.outputs.dx = ctx.state[3];
-      ctx.outputs.w1 = ctx.state[4];
-      ctx.outputs.w2 = ctx.state[5];
-    },
-    derivatives: (ctx) => {
-      pendulumDerivatives(ctx.state, ctx.inputs.force ?? 0, readPendulumParams(ctx.parameters), ctx.deriv);
-    },
-  },
-  {
     type: 'scope',
     category: 'Sinks',
     name: 'Scope',
@@ -1043,6 +969,7 @@ export const BLOCKS: BlockDefinition[] = [
     discreteStates: none,
     outputs: () => undefined,
   },
+  ...DOMAIN_BLOCKS,
 ];
 
 function ssInputs(ctx: BlockContext, m: number): number[] {
@@ -1058,7 +985,7 @@ export function getBlock(type: string): BlockDefinition | undefined {
 }
 
 export function libraryGroups(): { category: string; blocks: BlockDefinition[] }[] {
-  const order = ['Sources', 'Math', 'Continuous', 'Discrete', 'Nonlinear', 'Plants', 'Sinks', 'Annotation'];
+  const order = ['Sources', 'Math', 'Continuous', 'Discrete', 'Nonlinear', 'Dynamics', 'Sinks', 'Annotation'];
   return order.map((category) => ({
     category,
     blocks: BLOCKS.filter((block) => block.category === category),
@@ -1099,9 +1026,28 @@ export function blockSummary(def: BlockDefinition, parameters: Record<string, Pa
       return formatCompact(num(parameters, 'finalValue', 1));
     case 'pulse':
       return formatCompact(num(parameters, 'amplitude', 1));
+    case 'secondorder':
+    case 'ode':
+    case 'mass':
+    case 'inertia':
+    case 'spring':
+    case 'damper':
+    case 'dcmotor':
+    case 'rlc':
+    case 'pneumatic_tank':
+    case 'pneumatic_valve':
+    case 'hydraulic_chamber':
+    case 'thermal_mass':
+    case 'conduction':
+      return domainSummary(def.type, parameters);
     default:
       return '';
   }
+}
+
+/** Parse state-space matrices from block parameters. */
+export function readStateSpace(parameters: Record<string, Param>) {
+  return ssOf(parameters);
 }
 
 export function formatCompact(value: number): string {

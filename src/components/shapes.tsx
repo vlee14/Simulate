@@ -247,6 +247,74 @@ function faceFor(blockType: string, parameters: Record<string, Param>, inputs: P
       width = 138;
       height = Math.max(58, tall);
       break;
+    case 'ode':
+      glyph = {
+        kind: 'stack',
+        lines: [asText(parameters.form, 'explicit') === 'mass' ? 'M(q)q̈ = rhs' : 'ẋ = f(x,u,t)'],
+      };
+      width = 128;
+      height = Math.max(52, tall);
+      break;
+    case 'secondorder':
+      glyph = { kind: 'stack', lines: ['ÿ + 2ζωẏ', '+ ω²y = Ku'] };
+      width = 110;
+      height = Math.max(58, tall);
+      break;
+    case 'mass':
+      glyph = { kind: 'text', text: 'm', large: true };
+      width = 56;
+      height = Math.max(48, tall);
+      break;
+    case 'inertia':
+      glyph = { kind: 'text', text: 'J', large: true };
+      width = 56;
+      height = Math.max(48, tall);
+      break;
+    case 'spring':
+      glyph = { kind: 'text', text: 'k', large: true };
+      width = 56;
+      height = 44;
+      break;
+    case 'damper':
+      glyph = { kind: 'text', text: 'c', large: true };
+      width = 56;
+      height = 44;
+      break;
+    case 'dcmotor':
+      glyph = { kind: 'stack', lines: ['DC motor'] };
+      width = 96;
+      height = Math.max(52, tall);
+      break;
+    case 'rlc':
+      glyph = { kind: 'text', text: 'RLC', large: true };
+      width = 72;
+      height = Math.max(48, tall);
+      break;
+    case 'pneumatic_tank':
+      glyph = { kind: 'stack', lines: ['tank', 'Cṗ = q'] };
+      width = 88;
+      height = Math.max(58, tall);
+      break;
+    case 'pneumatic_valve':
+      glyph = { kind: 'text', text: 'valve' };
+      width = 80;
+      height = Math.max(48, tall);
+      break;
+    case 'hydraulic_chamber':
+      glyph = { kind: 'stack', lines: ['hydraulic'] };
+      width = 100;
+      height = Math.max(52, tall);
+      break;
+    case 'thermal_mass':
+      glyph = { kind: 'text', text: 'Cₜ', large: true };
+      width = 64;
+      height = Math.max(48, tall);
+      break;
+    case 'conduction':
+      glyph = { kind: 'text', text: 'G', large: true };
+      width = 56;
+      height = Math.max(48, tall);
+      break;
     case 'pid':
       glyph = { kind: 'text', text: 'PID', large: true };
       width = 72;

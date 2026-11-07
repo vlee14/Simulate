@@ -1,6 +1,8 @@
+import { readStateSpace } from './blocks';
 import { c2d, clone, lyapunov, matVec, mul, rank, transpose, zeros } from './linalg';
 import { eigenvalues, Eigenvalue, isHurwitz } from './eig';
-import { linearizePendulum, PendulumParams } from './physics';
+import { linearizeBlock } from './linearize';
+import { Param } from './types';
 
 export interface LqrResult {
   K: number[];
@@ -133,8 +135,26 @@ export function lqr(A: number[][], B: number[][], Qdiag: number[], R: number): L
   return { K, polesOpen, polesClosed, controllable: true, rank: ctrb.rank };
 }
 
-export function designPendulumLqr(params: PendulumParams, Qdiag: number[], R: number): LqrResult {
-  const { A, B } = linearizePendulum(params);
+export function designStateSpaceLqr(parameters: Record<string, Param>, Qdiag: number[], R: number): LqrResult {
+  const ss = readStateSpace(parameters);
+  return lqr(ss.A, ss.B, Qdiag, R);
+}
+
+export function designDynamicsLqr(
+  blockType: string,
+  parameters: Record<string, Param>,
+  Qdiag: number[],
+  R: number,
+  x0?: number[],
+  u0?: number[]
+): LqrResult {
+  if (blockType === 'statespace') return designStateSpaceLqr(parameters, Qdiag, R);
+  const { A, B } = linearizeBlock(blockType, parameters, x0, u0);
+  if (B[0]?.length !== 1) {
+    // Reduce to the first input for the current single-input LQR path.
+    const B1 = B.map((row) => [row[0] ?? 0]);
+    return lqr(A, B1, Qdiag, R);
+  }
   return lqr(A, B, Qdiag, R);
 }
 

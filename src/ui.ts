@@ -23,7 +23,7 @@ export const CATEGORY_COLOR: Record<string, string> = {
   Continuous: '#3dbe86',
   Discrete: '#d2a8ff',
   Nonlinear: '#ff8a5b',
-  Plants: '#ffb085',
+  Dynamics: '#ffb085',
   Sinks: '#ff6b8a',
   Annotation: '#8b97a8',
 };

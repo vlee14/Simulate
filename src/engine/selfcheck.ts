@@ -1,10 +1,11 @@
-import { eigenvalues } from './eig';
-import { lqr } from './lqr';
-import { lagrangianResidual, pendulumDerivatives, DEFAULT_PENDULUM, linearizePendulum } from './physics';
-import { SimulationEngine } from './runtime';
-import { documentGraph, pendulumDocument, regulatorGains } from '../model/examples';
+import { documentGraph, pendulumDocument, regulatorGains, oscillatorDocument, motorDocument, pneumaticDocument } from '../model/examples';
+import { CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
 import { compileExpression } from './expr';
 import { SimCompileError, compile } from './compile';
+import { eigenvalues } from './eig';
+import { designDynamicsLqr, lqr } from './lqr';
+import { lagrangianResidual, pendulumDerivatives, DEFAULT_PENDULUM, linearizePendulum } from './physics';
+import { SimulationEngine } from './runtime';
 
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
@@ -89,8 +90,19 @@ function main(): void {
   const open = eigenvalues(A);
   assert(open.length === 6, `expected 6 open-loop poles, got ${open.length}`);
   assert(open.some((e) => e.real > 0.5), `upright equilibrium should be unstable ${JSON.stringify(open)}`);
+
+  const weights = [40, 20, 20, 10, 0.5, 0.5];
+  const odeLqr = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, weights, 0.8);
+  assert(odeLqr.polesClosed.length === 6, `expected 6 closed-loop poles from ODE, got ${odeLqr.polesClosed.length}`);
+  assert(odeLqr.polesClosed.every((e) => e.real < 0), 'ODE LQR closed loop should be stable');
+
+  const ref = lqr(A, B, weights, 0.8);
+  for (let i = 0; i < 6; i++) {
+    assert(Math.abs(odeLqr.K[i] - ref.K[i]) < 0.25, `ODE LQR K[${i}]=${odeLqr.K[i]} vs physics ${ref.K[i]}`);
+  }
+
   const doc = pendulumDocument();
-  const designed = lqr(A, B, doc.design.Q, doc.design.R);
+  const designed = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, doc.design.Q, doc.design.R);
   assert(designed.polesClosed.length === 6, `expected 6 closed-loop poles, got ${designed.polesClosed.length}`);
   console.log('K', designed.K.map((v) => Number(v.toFixed(3))).join(', '));
   console.log(
@@ -105,12 +117,25 @@ function main(): void {
   }
   const engine = runEngine(doc, 14);
   const plant = engine.compiled!.byId.get('plant')!;
-  const x = plant.outputs.x;
-  const th1 = plant.outputs.th1;
-  const th2 = plant.outputs.th2;
+  const x = plant.outputs.y0;
+  const th1 = plant.outputs.y1;
+  const th2 = plant.outputs.y2;
   console.log('engine t', engine.time.toFixed(3), 'x', x.toFixed(4), 'th', th1.toFixed(4), th2.toFixed(4), 'F', engine.compiled!.byId.get('sum-f')!.outputs.out.toFixed(3));
   assert(Math.abs(th1) < 0.06 && Math.abs(th2) < 0.06, `engine did not balance (${th1}, ${th2})`);
   assert(Math.abs(x) < 0.25, `engine cart at ${x}`);
+
+  const massDoc = oscillatorDocument();
+  const massEngine = runEngine(massDoc, 14);
+  const massX = massEngine.compiled!.byId.get('mass')!.outputs.x;
+  assert(Math.abs(massX - 1) < 0.2, `mass-spring should settle near 1, got ${massX}`);
+
+  const motorEng = runEngine(motorDocument(), 3.5);
+  const w = motorEng.compiled!.byId.get('motor')!.outputs.w;
+  assert(Math.abs(w - 5) < 1, `motor speed should track 5, got ${w}`);
+
+  const pneuEng = runEngine(pneumaticDocument(), 9);
+  const pressure = pneuEng.compiled!.byId.get('tank')!.outputs.p;
+  assert(pressure > 2, `tank should charge, p=${pressure}`);
 
   const expr = compileExpression('sin(u1)^2 + cos(u1)^2 + 0.5*u2');
   close(expr({ u1: 0.4, u2: 4 }), 3, 1e-9, 'expression');
