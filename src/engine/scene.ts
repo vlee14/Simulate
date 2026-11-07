@@ -303,6 +303,169 @@ export function stageTrailTip(config: StageConfig, signals: Record<string, numbe
   return tip ? { x: tip.tipX, y: tip.tipY } : null;
 }
 
+export interface WorldBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+/** Canvas camera: world `look` maps to pixel `origin`. */
+export interface StageCamera {
+  scale: number;
+  lookX: number;
+  lookY: number;
+  originX: number;
+  originY: number;
+}
+
+/** True when the scene uses world-space geometry that should be framed. */
+export function stageUsesWorldCamera(config: StageConfig): boolean {
+  return config.elements.some((element) => element.type === 'box' || element.type === 'disk' || element.type === 'link');
+}
+
+/** Axis-aligned bounds of live world-space stage geometry. */
+export function stageWorldBounds(config: StageConfig, signals: Record<string, number>): WorldBounds | null {
+  if (!stageUsesWorldCamera(config)) return null;
+  const poses = collectPoses(config, signals);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  const include = (x: number, y: number, r = 0) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    minX = Math.min(minX, x - r);
+    maxX = Math.max(maxX, x + r);
+    minY = Math.min(minY, y - r);
+    maxY = Math.max(maxY, y + r);
+  };
+  for (const pose of poses.values()) {
+    const r = pose.radius ?? 0.1;
+    include(pose.tipX, pose.tipY, r);
+    if (pose.baseX !== undefined && pose.baseY !== undefined) include(pose.baseX, pose.baseY, r * 0.5);
+  }
+  // Ground is a full-width line at y=0 — keep it in the vertical frame without pinning x to the origin.
+  if (config.elements.some((element) => element.type === 'ground') && Number.isFinite(minX)) {
+    const mid = (minX + maxX) / 2;
+    include(mid, 0, 0);
+  }
+  if (!Number.isFinite(minX)) return null;
+  // Keep a usable minimum extent so a single point still frames.
+  const pad = 0.35;
+  if (maxX - minX < pad) {
+    const cx = (minX + maxX) / 2;
+    minX = cx - pad / 2;
+    maxX = cx + pad / 2;
+  }
+  if (maxY - minY < pad) {
+    const cy = (minY + maxY) / 2;
+    minY = cy - pad / 2;
+    maxY = cy + pad / 2;
+  }
+  return { minX, maxX, minY, maxY };
+}
+
+function defaultStageCamera(width: number, height: number, scale: number, grounded: boolean): StageCamera {
+  return {
+    scale,
+    lookX: 0,
+    lookY: 0,
+    originX: width * 0.5,
+    originY: height * (grounded ? 0.68 : 0.5),
+  };
+}
+
+/**
+ * Fit / center the stage camera on live world geometry.
+ * Zooms out from the authored scale when content would clip; pans to keep subjects in frame.
+ */
+export function fitStageCamera(
+  config: StageConfig,
+  signals: Record<string, number>,
+  width: number,
+  height: number,
+  previous?: StageCamera | null
+): StageCamera {
+  const preferred = config.scale && config.scale > 0 ? config.scale : 100;
+  const grounded = config.elements.some((element) => element.type === 'ground');
+  const bounds = stageWorldBounds(config, signals);
+  if (!bounds || width < 2 || height < 2) {
+    return settleStageCamera(previous, defaultStageCamera(width, height, preferred, grounded));
+  }
+
+  const marginX = Math.max(18, width * 0.12);
+  const marginY = Math.max(16, height * 0.14);
+  const viewW = Math.max(1, width - marginX * 2);
+  const viewH = Math.max(1, height - marginY * 2);
+
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cy = (bounds.minY + bounds.maxY) / 2;
+  // Bias the look toward the trailed subject so chase / tip stay in the sweet spot,
+  // while still framing the full bounds via scale.
+  const tip = stageTrailTip(config, signals);
+  const lookX = tip ? tip.x * 0.4 + cx * 0.6 : cx;
+  let lookY = tip ? tip.y * 0.25 + cy * 0.75 : cy;
+
+  const halfW = Math.max(bounds.maxX - lookX, lookX - bounds.minX, 0.3);
+  const halfH = Math.max(bounds.maxY - lookY, lookY - bounds.minY, 0.3);
+  let scale = Math.min(preferred, viewW / (2 * halfW), viewH / (2 * halfH));
+  scale = Math.max(scale, preferred * 0.18);
+
+  const originX = width * 0.5;
+  // Grounded scenes sit slightly low so wheels/ground read as a floor; airborne stays mid-frame.
+  const originY = grounded ? height * 0.58 : height * 0.5;
+
+  if (grounded) {
+    // If y=0 would fall off the bottom after centering, lift lookY just enough to keep it.
+    const groundY = originY + lookY * scale;
+    const maxGround = height - marginY;
+    if (groundY > maxGround) {
+      lookY = (maxGround - originY) / scale;
+    }
+  }
+
+  return settleStageCamera(previous, { scale, lookX, lookY, originX, originY });
+}
+
+/**
+ * Soft-follow with snap on large jumps (demo switch / teleport) so framing
+ * does not linger on a previous scene's look point.
+ */
+export function settleStageCamera(previous: StageCamera | null | undefined, next: StageCamera, alpha = 0.28): StageCamera {
+  if (!previous) return next;
+  const jump =
+    Math.hypot(next.lookX - previous.lookX, next.lookY - previous.lookY) > 2.5 ||
+    Math.abs(next.scale - previous.scale) > Math.max(next.scale, previous.scale) * 0.65;
+  if (jump) return next;
+  const blend = (a: number, b: number) => a + (b - a) * alpha;
+  return {
+    scale: blend(previous.scale, next.scale),
+    lookX: blend(previous.lookX, next.lookX),
+    lookY: blend(previous.lookY, next.lookY),
+    originX: next.originX,
+    originY: next.originY,
+  };
+}
+
+/** @deprecated Use settleStageCamera. */
+export function smoothStageCamera(previous: StageCamera | null | undefined, next: StageCamera, alpha = 0.28): StageCamera {
+  return settleStageCamera(previous, next, alpha);
+}
+
+export function canvasToWorld(camera: StageCamera, px: number, py: number): { x: number; y: number } {
+  return {
+    x: camera.lookX + (px - camera.originX) / camera.scale,
+    y: camera.lookY + (camera.originY - py) / camera.scale,
+  };
+}
+
+export function worldToCanvas(camera: StageCamera, wx: number, wy: number): { x: number; y: number } {
+  return {
+    x: camera.originX + (wx - camera.lookX) * camera.scale,
+    y: camera.originY - (wy - camera.lookY) * camera.scale,
+  };
+}
+
 /** Hit targets for pointer interactions (world units). */
 export function stageHitTargets(config: StageConfig, signals: Record<string, number>): StageHitTarget[] {
   const poses = collectPoses(config, signals);

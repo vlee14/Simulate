@@ -26,7 +26,7 @@ import { eigenvalues } from './eig';
 import { designDynamicsLqr, lqr } from './lqr';
 import { linearizeBlock } from './linearize';
 import { SimulationEngine } from './runtime';
-import { parseStageConfig, stageTrailTip } from './scene';
+import { fitStageCamera, parseStageConfig, stageTrailTip, stageWorldBounds } from './scene';
 import { analyzeStability, logspace, parseVector } from './stability';
 import { frequencyResponseBatchCpu, packPlant } from './freqBatch';
 import { sampleMcRange } from './mcSample';
@@ -144,6 +144,23 @@ function main(): void {
   assert(!!tip && Number.isFinite(tip.x) && Number.isFinite(tip.y), 'trail tip should resolve from scene data');
   assert(String(stage!.parameters?.scene ?? '').includes('"type"'), 'Stage scene is JSON data');
   assert(SCENE_CART_PENDULUM.inputs.includes('th1'), 'scene preset is shared data');
+
+  // Stage camera should follow / fit world geometry instead of a fixed origin.
+  const farSignals = { x: 2.4, th1: 0.15, th2: -0.1, force: 0 };
+  const bounds = stageWorldBounds(stageCfg, farSignals);
+  assert(!!bounds && (bounds.minX + bounds.maxX) / 2 > 1.5, 'world bounds should track cart x');
+  const cam = fitStageCamera(stageCfg, farSignals, 640, 220, null);
+  assert(cam.lookX > 1.2 && cam.lookX < 3.2, 'camera lookX should sit near the cart cluster');
+  const tight = fitStageCamera(stageCfg, farSignals, 200, 120, null);
+  assert(tight.scale < (stageCfg.scale ?? 140), 'camera should zoom out when the dock is small');
+  const stale = fitStageCamera(stageCfg, farSignals, 640, 220, {
+    scale: 140,
+    lookX: 12,
+    lookY: 4,
+    originX: 320,
+    originY: 110,
+  });
+  assert(Math.abs(stale.lookX - cam.lookX) < 0.05, 'camera should snap when the previous look is far away');
 
   // Live control + pulse disturbance should update sources without special plant code.
   const controlProbe = new SimulationEngine(

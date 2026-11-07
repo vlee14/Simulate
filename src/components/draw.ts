@@ -1,11 +1,20 @@
 import { RingBuffer, TrailPoint } from '../engine/telemetry';
-import { resolveRef, SceneElement, StageConfig } from '../engine/scene';
+import {
+  fitStageCamera,
+  resolveRef,
+  SceneElement,
+  StageCamera,
+  StageConfig,
+  worldToCanvas,
+} from '../engine/scene';
 
 export interface StageView {
   config: StageConfig;
   signals: Record<string, number>;
   trail: TrailPoint[];
 }
+
+const cameraMemory = new WeakMap<HTMLCanvasElement, StageCamera>();
 
 export function prep(canvas: HTMLCanvasElement): { ctx: CanvasRenderingContext2D; w: number; h: number } | null {
   const ctx = canvas.getContext('2d');
@@ -31,20 +40,22 @@ interface Pose {
   tipY: number;
 }
 
-export function drawStage(canvas: HTMLCanvasElement, view: StageView): void {
+/** Draw the stage and return the camera used (for hit-testing). */
+export function drawStage(canvas: HTMLCanvasElement, view: StageView): StageCamera | null {
   const surface = prep(canvas);
-  if (!surface) return;
+  if (!surface) return null;
   const { ctx, w, h } = surface;
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#0c1016';
   ctx.fillRect(0, 0, w, h);
 
   const signals = view.signals;
-  const scale = view.config.scale ?? 100;
-  const originX = w * 0.5;
-  const originY = h * 0.72;
-  const toX = (wx: number) => originX + wx * scale;
-  const toY = (wy: number) => originY - wy * scale;
+  const camera = fitStageCamera(view.config, signals, w, h, cameraMemory.get(canvas));
+  cameraMemory.set(canvas, camera);
+  const scale = camera.scale;
+  const toX = (wx: number) => worldToCanvas(camera, wx, 0).x;
+  const toY = (wy: number) => worldToCanvas(camera, 0, wy).y;
+  const groundY = worldToCanvas(camera, 0, 0).y;
   const poses = new Map<string, Pose>();
 
   // Trail under elements
@@ -62,8 +73,14 @@ export function drawStage(canvas: HTMLCanvasElement, view: StageView): void {
   }
 
   for (const element of view.config.elements) {
-    drawElement(ctx, element, signals, poses, toX, toY, originX, originY, scale, w, h);
+    drawElement(ctx, element, signals, poses, toX, toY, camera.originX, groundY, scale, w, h);
   }
+  return camera;
+}
+
+/** Last camera used to paint this canvas, if any. */
+export function stageCameraFor(canvas: HTMLCanvasElement | null): StageCamera | null {
+  return canvas ? cameraMemory.get(canvas) ?? null : null;
 }
 
 function drawElement(
@@ -74,7 +91,7 @@ function drawElement(
   toX: (x: number) => number,
   toY: (y: number) => number,
   originX: number,
-  originY: number,
+  groundY: number,
   scale: number,
   w: number,
   h: number
@@ -84,8 +101,8 @@ function drawElement(
     ctx.strokeStyle = '#243041';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(16, originY);
-    ctx.lineTo(w - 16, originY);
+    ctx.moveTo(16, groundY);
+    ctx.lineTo(w - 16, groundY);
     ctx.stroke();
     return;
   }
@@ -97,13 +114,16 @@ function drawElement(
     const px = toX(x) - bw / 2;
     const py = toY(y) - bh;
     roundRect(ctx, px, py, bw, bh, 6, '#1c2633', color);
-    ctx.fillStyle = '#10141a';
-    ctx.strokeStyle = color;
-    for (const wheel of [-bw * 0.28, bw * 0.28]) {
-      ctx.beginPath();
-      ctx.arc(toX(x) + wheel, originY - 4, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+    // Wheels only for ground-contact boxes (cart-style); skip for airborne targets/quads.
+    if (Math.abs(y) < 0.05) {
+      ctx.fillStyle = '#10141a';
+      ctx.strokeStyle = color;
+      for (const wheel of [-bw * 0.28, bw * 0.28]) {
+        ctx.beginPath();
+        ctx.arc(toX(x) + wheel, groundY - 4, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     }
     if (element.id) poses.set(element.id, { x, y: y + resolveRef(element.h, signals, 0.2), tipX: x, tipY: y + resolveRef(element.h, signals, 0.2) });
     return;
@@ -156,7 +176,7 @@ function drawElement(
     const tw = resolveRef(element.w, signals, 1.2) * scale;
     const th = resolveRef(element.h, signals, 1.6) * scale;
     const left = originX - tw / 2;
-    const top = originY - th - 20;
+    const top = groundY - th - 20;
     const capacity = Math.max(1e-6, resolveRef(element.capacity, signals, 5));
     const level = resolveRef(element.value, signals);
     const frac = Math.max(0, Math.min(1, level / capacity));
@@ -189,8 +209,10 @@ function drawElement(
   if (element.type === 'springmass') {
     const x = resolveRef(element.x, signals);
     const cy = h * 0.5;
-    const wall = w * 0.16;
-    const massX = wall + 80 + x * scale;
+    // Rest position centered in the dock; wall sits a fixed spring length to the left.
+    const restX = w * 0.58;
+    const wall = Math.max(16, restX - Math.min(w * 0.42, 160));
+    const massX = restX + x * scale;
     ctx.strokeStyle = '#8b97a8';
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -220,7 +242,7 @@ function drawElement(
     ctx.strokeStyle = force >= 0 ? '#e7a23a' : '#ff6b8a';
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = 2;
-    const y = originY + 28;
+    const y = groundY + 28;
     ctx.beginPath();
     ctx.moveTo(originX, y);
     ctx.lineTo(originX + arrow, y);

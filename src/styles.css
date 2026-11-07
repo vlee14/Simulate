@@ -689,7 +689,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dock-bar strong { color: var(--text); font-weight: 640; }
 .dock-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dock-body { height: 220px; display: flex; min-height: 0; }
-.stage-canvas { width: 52%; height: 100%; display: block; background: var(--bg-sunken); border-radius: 0 0 0 12px; }
+.stage-canvas { width: 64%; height: 100%; display: block; background: var(--bg-sunken); border-radius: 0 0 0 12px; }
 .stage-canvas.interactive { cursor: grab; touch-action: none; }
 .stage-canvas.interactive:active { cursor: grabbing; }
 .readouts { flex: 1; padding: 8px 10px 10px; overflow: auto; }

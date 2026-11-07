@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { hitTestStage, parseStageConfig, StageDisturbance } from '../engine/scene';
+import { canvasToWorld, hitTestStage, parseStageConfig, StageCamera, StageDisturbance } from '../engine/scene';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData } from '../model/elements';
 import { fireDisturbance, nudgeState, setControlValue } from '../sim/controller';
 import { useStore } from '../store';
 import { COMPACT_LAYOUT, useMediaQuery } from '../ui';
-import { drawStage } from './draw';
+import { drawStage, stageCameraFor } from './draw';
 
 export const Dock: React.FC = () => {
   const elements = useStore((state) => state.elements);
@@ -16,6 +16,7 @@ export const Dock: React.FC = () => {
   const [open, setOpen] = useState(() => (typeof window === 'undefined' ? true : !window.matchMedia(COMPACT_LAYOUT).matches));
   const wasCompact = useRef(compact);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const cameraRef = useRef<StageCamera | null>(null);
   const [tick, setTick] = useState(0);
   const dragRef = useRef<{ mode: 'control' | 'idle'; lastX: number } | null>(null);
   const keysRef = useRef({ left: false, right: false });
@@ -39,17 +40,23 @@ export const Dock: React.FC = () => {
   const controlData = controlNode && !isEdge(controlNode) ? (controlNode.data as NodeData) : null;
   const controlValue = Number(controlData?.parameters.value ?? 0);
 
+  // New Stage document → drop prior demo's camera so framing does not linger.
+  useEffect(() => {
+    cameraRef.current = null;
+  }, [stage?.id]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !data || !open || !stage || !config) return;
     const live = telemetry.latest.get(stage.id) ?? {};
     const signals: Record<string, number> = {};
     for (const port of config.inputs) signals[port.id] = live[port.id] ?? 0;
-    drawStage(canvas, {
+    const camera = drawStage(canvas, {
       config,
       signals,
       trail: telemetry.trails.get(stage.id) ?? [],
     });
+    if (camera) cameraRef.current = camera;
   }, [config, data, open, stage, tick]);
 
   // Arrow-key hold → control (when Stage is open and a control binding exists).
@@ -112,14 +119,22 @@ export const Dock: React.FC = () => {
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) return null;
-    const scale = config.scale ?? 100;
-    const originX = rect.width * 0.5;
-    const originY = rect.height * 0.72;
     const px = clientX - rect.left;
     const py = clientY - rect.top;
+    const camera =
+      cameraRef.current ??
+      stageCameraFor(canvas) ??
+      ({
+        scale: config.scale ?? 100,
+        lookX: 0,
+        lookY: 0,
+        originX: rect.width * 0.5,
+        originY: rect.height * 0.72,
+      } satisfies StageCamera);
+    const world = canvasToWorld(camera, px, py);
     return {
-      x: (px - originX) / scale,
-      y: (originY - py) / scale,
+      x: world.x,
+      y: world.y,
       px,
       width: rect.width,
     };
