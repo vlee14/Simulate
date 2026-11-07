@@ -87,7 +87,16 @@ export interface SimConfig {
 /** Where to linearize the plant for LQR / stability analysis. */
 export type LinearizationPoint = 'equilibrium' | 'x0' | 'live' | 'custom';
 
-export type AnalysisOption = 'poles' | 'margins' | 'damping' | 'ctrb' | 'polemap';
+export type AnalysisOption =
+  | 'poles'
+  | 'margins'
+  | 'damping'
+  | 'ctrb'
+  | 'polemap'
+  | 'bode'
+  | 'nyquist'
+  | 'nichols'
+  | 'rlocus';
 
 export interface DesignConfig {
   Q: number[];

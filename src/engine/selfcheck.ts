@@ -85,10 +85,13 @@ function main(): void {
     Atip,
     Btip.map((row) => [row[0] ?? 0]),
     odeLqr.K,
-    ['poles', 'ctrb', 'margins']
+    ['poles', 'ctrb', 'margins', 'bode', 'nyquist', 'nichols', 'rlocus']
   );
   assert(reportTip.polesOpen.length === 6, 'breakpoint linearization should keep state dim');
   assert(reportTip.margins != null, 'margins option should produce a margins block');
+  assert(reportTip.freq.length > 20, `Bode/Nyquist need frequency samples, got ${reportTip.freq.length}`);
+  assert(reportTip.rootLocus.length === 6, `root locus should track ${6} branches`);
+  assert(reportTip.rootLocus[0].points.length > 10, 'root locus branches should be sampled');
 
   const doc = pendulumDocument();
   const designed = designDynamicsLqr('ode', { ...CART_DOUBLE_PENDULUM_ODE }, doc.design.Q, doc.design.R);

@@ -568,13 +568,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: var(--text);
   font-size: 12px;
 }
-.pole-map {
+.pole-map,
+.stability-plot {
   margin: 8px 0 12px;
 }
-.pole-map svg {
+.pole-map svg,
+.stability-plot svg {
   display: block;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+.stability-plot-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
 }
 
 .dock {

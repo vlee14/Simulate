@@ -8,6 +8,7 @@ import { isEdge, NodeData } from '../model/elements';
 import { analyzeController, captureLinearizationPoint, computeLqr, resetSim } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
+import { StabilityPlotGrid } from './StabilityPlots';
 
 const Q_LABELS = ['Q₁ (x₁)', 'Q₂ (x₂)', 'Q₃ (x₃)', 'Q₄ (x₄)', 'Q₅ (x₅)', 'Q₆ (x₆)'];
 
@@ -363,7 +364,7 @@ function DesignPane() {
             </ul>
           ) : null}
 
-          {show('polemap') && report ? <PoleMap open={report.polesOpen} closed={report.polesClosed} /> : null}
+          {report ? <StabilityPlotGrid report={report} show={show} /> : null}
 
           {show('poles') ? (
             <>
@@ -455,42 +456,6 @@ function DesignPane() {
       ) : (
         <p className="hint">Select a plant, set the breakpoint, then Analyze or Compute LQR.</p>
       )}
-    </div>
-  );
-}
-
-function PoleMap({ open, closed }: { open: { real: number; imag: number }[]; closed: { real: number; imag: number }[] }) {
-  const pts = [...open, ...closed];
-  if (!pts.length) return null;
-  const maxR = Math.max(1, ...pts.map((p) => Math.abs(p.real)));
-  const maxI = Math.max(1, ...pts.map((p) => Math.abs(p.imag)));
-  const lim = Math.max(maxR, maxI) * 1.15;
-  const W = 220;
-  const H = 160;
-  const pad = 16;
-  const toX = (re: number) => pad + ((re + lim) / (2 * lim)) * (W - 2 * pad);
-  const toY = (im: number) => H - pad - ((im + lim) / (2 * lim)) * (H - 2 * pad);
-  return (
-    <div className="pole-map">
-      <h3>Pole map</h3>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Open and closed-loop poles">
-        <rect x="0" y="0" width={W} height={H} fill="#0c1016" rx="8" />
-        <line x1={toX(0)} y1={pad} x2={toX(0)} y2={H - pad} stroke="#243041" />
-        <line x1={pad} y1={toY(0)} x2={W - pad} y2={toY(0)} stroke="#243041" />
-        <text x={W - pad} y={toY(0) - 4} fill="#6b7785" fontSize="9" textAnchor="end">
-          Re
-        </text>
-        <text x={toX(0) + 4} y={pad + 8} fill="#6b7785" fontSize="9">
-          Im
-        </text>
-        {open.map((p, i) => (
-          <circle key={`o${i}`} cx={toX(p.real)} cy={toY(p.imag)} r="4" fill="none" stroke="#ff6b8a" strokeWidth="1.5" />
-        ))}
-        {closed.map((p, i) => (
-          <circle key={`c${i}`} cx={toX(p.real)} cy={toY(p.imag)} r="3.5" fill="#7ddea0" />
-        ))}
-      </svg>
-      <p className="hint">○ open · ● closed · left half-plane is stable</p>
     </div>
   );
 }

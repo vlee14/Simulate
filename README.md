@@ -122,7 +122,7 @@ The platform organizes blocks into functional categories:
 
 Use **Plant builder** in the library to insert wired recipes (plant + actuators + sensors + Stage animation), or package the cart–pendulum recipe as one Subsystem block. Stage drawing is data-driven: an `inputs` port list plus a JSON `scene` of boxes, links, disks, tanks, pistons, and spring–masses. Stage also binds a **user control** (`control` → Manual block), **disturbances** (pulse kicks / state nudges), and **canvas interactions** (drag for force, click links/boxes to tip) — all as parameter strings, no demo-specific UI code.
 
-The **Design** pane linearizes a Dynamics plant about a chosen operating point (equilibrium, plant x₀, live state, or a custom breakpoint), then runs selectable stability reports (eigenvalues, controllability, damping/ωₙ, gain/phase margins, pole map) and can apply LQR onto gain roles `k0…` / `kref`.
+The **Design** pane linearizes a Dynamics plant about a chosen operating point (equilibrium, plant x₀, live state, or a custom breakpoint), then runs selectable stability reports — eigenvalues, controllability, damping/ωₙ, gain/phase margins, pole map, **Bode**, **Nyquist**, **Nichols**, and **root locus** — and can apply LQR onto gain roles `k0…` / `kref`.
 
 ---
 

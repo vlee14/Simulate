@@ -11,7 +11,25 @@ export const ALL_ANALYSIS_OPTIONS: { id: AnalysisOption; label: string; help: st
   { id: 'damping', label: 'Damping & ωₙ', help: 'ζ and natural frequency of complex poles' },
   { id: 'margins', label: 'Gain / phase margins', help: 'SISO margins of L(s)=K(sI−A)⁻¹B' },
   { id: 'polemap', label: 'Pole map', help: 's-plane sketch of open vs closed poles' },
+  { id: 'bode', label: 'Bode plot', help: '|L| and ∠L vs frequency' },
+  { id: 'nyquist', label: 'Nyquist plot', help: 'Im(L) vs Re(L) with −1 point' },
+  { id: 'nichols', label: 'Nichols chart', help: '|L| dB vs phase' },
+  { id: 'rlocus', label: 'Root locus', help: 'Closed-loop poles as gain ρ scales K' },
 ];
+
+export interface FreqPoint {
+  w: number;
+  re: number;
+  im: number;
+  mag: number;
+  magDb: number;
+  phaseDeg: number;
+}
+
+export interface RootLocusBranch {
+  /** Pole index tracked across gain samples. */
+  points: { rho: number; real: number; imag: number }[];
+}
 
 export interface PoleMode {
   real: number;
@@ -42,6 +60,8 @@ export interface StabilityReport {
   controllabilityRank: number;
   modes: PoleMode[];
   margins: MarginResult | null;
+  freq: FreqPoint[];
+  rootLocus: RootLocusBranch[];
   summary: string[];
 }
 
@@ -154,7 +174,43 @@ function loopResponse(A: number[][], B: number[][], K: number[], w: number): { r
   return { re, im };
 }
 
-export function loopMargins(A: number[][], B: number[][], K: number[]): MarginResult {
+function logspace(wMin: number, wMax: number, n: number): number[] {
+  const a = Math.log10(wMin);
+  const b = Math.log10(wMax);
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(Math.pow(10, a + ((b - a) * i) / Math.max(1, n - 1)));
+  return out;
+}
+
+/** Frequency response of return ratio L(jw)=K(jwI−A)⁻¹B with unwrapped phase. */
+export function frequencyResponse(A: number[][], B: number[][], K: number[], n = 160): FreqPoint[] {
+  if (!K.some((v) => Math.abs(v) > 1e-12)) return [];
+  const ws = logspace(1e-3, 1e3, n);
+  const points: FreqPoint[] = [];
+  let prevPhase: number | null = null;
+  for (const w of ws) {
+    const L = loopResponse(A, B, K, w);
+    if (!L) continue;
+    const mag = Math.hypot(L.re, L.im);
+    let phaseDeg = (Math.atan2(L.im, L.re) * 180) / Math.PI;
+    if (prevPhase != null) {
+      while (phaseDeg - prevPhase > 180) phaseDeg -= 360;
+      while (phaseDeg - prevPhase < -180) phaseDeg += 360;
+    }
+    prevPhase = phaseDeg;
+    points.push({
+      w,
+      re: L.re,
+      im: L.im,
+      mag,
+      magDb: mag > 1e-16 ? 20 * Math.log10(mag) : -320,
+      phaseDeg,
+    });
+  }
+  return points;
+}
+
+export function loopMargins(A: number[][], B: number[][], K: number[], freq?: FreqPoint[]): MarginResult {
   if (!K.some((v) => Math.abs(v) > 1e-12)) {
     return {
       gainMarginDb: null,
@@ -164,42 +220,33 @@ export function loopMargins(A: number[][], B: number[][], K: number[]): MarginRe
       note: 'No feedback gain — margins undefined.',
     };
   }
-  const ws: number[] = [];
-  for (let e = -3; e <= 3; e += 0.05) ws.push(Math.pow(10, e));
+  const points = freq ?? frequencyResponse(A, B, K, 200);
   let gainCrossover: number | null = null;
   let phaseMargin: number | null = null;
   let phaseCrossover: number | null = null;
   let gainMarginDb: number | null = null;
-  let prev: { w: number; mag: number; phase: number; re: number; im: number } | null = null;
+  let prev: FreqPoint | null = null;
 
-  for (const w of ws) {
-    const L = loopResponse(A, B, K, w);
-    if (!L) continue;
-    const mag = Math.hypot(L.re, L.im);
-    const phase = (Math.atan2(L.im, L.re) * 180) / Math.PI; // deg of L
+  for (const p of points) {
     if (prev) {
-      // |L|=1 crossing → phase margin
-      if ((prev.mag - 1) * (mag - 1) <= 0 && prev.mag !== mag) {
-        const t = (1 - prev.mag) / (mag - prev.mag);
-        const wCross = prev.w + t * (w - prev.w);
-        const ph = prev.phase + t * (phase - prev.phase);
-        gainCrossover = wCross;
-        phaseMargin = 180 + ph; // classic PM for negative feedback with L
+      if ((prev.mag - 1) * (p.mag - 1) <= 0 && prev.mag !== p.mag) {
+        const t = (1 - prev.mag) / (p.mag - prev.mag);
+        gainCrossover = prev.w + t * (p.w - prev.w);
+        const ph = prev.phaseDeg + t * (p.phaseDeg - prev.phaseDeg);
+        phaseMargin = 180 + ph;
       }
-      // phase = -180 crossing → gain margin
-      const p0 = prev.phase;
-      const p1 = phase;
-      // unwrap-ish around -180
+      const p0 = prev.phaseDeg;
+      const p1 = p.phaseDeg;
       if ((p0 + 180) * (p1 + 180) <= 0 && Math.abs(p1 - p0) < 120) {
         const t = (-180 - p0) / (p1 - p0 || 1e-12);
-        const magCross = prev.mag + t * (mag - prev.mag);
+        const magCross = prev.mag + t * (p.mag - prev.mag);
         if (magCross > 1e-12) {
-          phaseCrossover = prev.w + t * (w - prev.w);
+          phaseCrossover = prev.w + t * (p.w - prev.w);
           gainMarginDb = -20 * Math.log10(magCross);
         }
       }
     }
-    prev = { w, mag, phase, re: L.re, im: L.im };
+    prev = p;
   }
 
   return {
@@ -212,6 +259,50 @@ export function loopMargins(A: number[][], B: number[][], K: number[]): MarginRe
         ? 'No crossover found in 10⁻³…10³ rad/s — widen bandwidth or check gains.'
         : 'Margins from frequency sweep of return ratio L(jw)=K(jwI−A)⁻¹B.',
   };
+}
+
+/** Root locus of A − ρ B K for ρ ∈ [0, ρMax]. */
+export function rootLocus(A: number[][], B: number[][], K: number[], samples = 48, rhoMax = 3): RootLocusBranch[] {
+  const n = A.length;
+  if (!n || !K.some((v) => Math.abs(v) > 1e-12)) {
+    return eigenvalues(A).map((p) => ({ points: [{ rho: 0, real: p.real, imag: p.imag }] }));
+  }
+  const branches: RootLocusBranch[] = Array.from({ length: n }, () => ({ points: [] }));
+  let prev: Eigenvalue[] | null = null;
+  for (let s = 0; s < samples; s++) {
+    const rho = (rhoMax * s) / Math.max(1, samples - 1);
+    const Acl = closedLoop(A, B, K.map((v) => v * rho));
+    let poles = eigenvalues(Acl);
+    if (prev) {
+      // Greedy match to keep branch continuity
+      const used = new Set<number>();
+      const ordered: Eigenvalue[] = [];
+      for (const p of prev) {
+        let best = -1;
+        let bestD = Infinity;
+        for (let i = 0; i < poles.length; i++) {
+          if (used.has(i)) continue;
+          const d = Math.hypot(poles[i].real - p.real, poles[i].imag - p.imag);
+          if (d < bestD) {
+            bestD = d;
+            best = i;
+          }
+        }
+        if (best >= 0) {
+          used.add(best);
+          ordered.push(poles[best]);
+        }
+      }
+      for (let i = 0; i < poles.length; i++) if (!used.has(i)) ordered.push(poles[i]);
+      poles = ordered.slice(0, n);
+    }
+    prev = poles;
+    for (let i = 0; i < n; i++) {
+      const p = poles[i] ?? { real: 0, imag: 0 };
+      branches[i].points.push({ rho, real: p.real, imag: p.imag });
+    }
+  }
+  return branches;
 }
 
 export function analyzeStability(
@@ -231,7 +322,10 @@ export function analyzeStability(
   const ctrbRank = want.has('ctrb') || want.has('poles') ? controllabilityRank(A, B) : 0;
   const controllable = ctrbRank >= A.length;
   const modes = want.has('damping') ? poleModes(polesClosed) : [];
-  const margins = want.has('margins') ? loopMargins(A, B, K) : null;
+  const needFreq = want.has('margins') || want.has('bode') || want.has('nyquist') || want.has('nichols');
+  const freq = needFreq ? frequencyResponse(A, B, K) : [];
+  const margins = want.has('margins') ? loopMargins(A, B, K, freq) : null;
+  const locus = want.has('rlocus') ? rootLocus(A, B, K) : [];
   const sigma = -spectralAbscissaClosed;
   const settlingEstimate = closedStable && sigma > 1e-6 ? 4 / sigma : null;
 
@@ -246,6 +340,8 @@ export function analyzeStability(
     const pm = margins.phaseMarginDeg == null ? '—' : `${margins.phaseMarginDeg.toFixed(1)}°`;
     summary.push(`Margins: GM ${gm}, PM ${pm}`);
   }
+  if (freq.length) summary.push(`Frequency response: ${freq.length} points`);
+  if (locus.length) summary.push(`Root locus: ${locus.length} branches`);
 
   return {
     n: A.length,
@@ -260,6 +356,8 @@ export function analyzeStability(
     controllabilityRank: ctrbRank,
     modes,
     margins,
+    freq,
+    rootLocus: locus,
     summary,
   };
 }
