@@ -1,6 +1,7 @@
 import { eigenvalues } from './eig';
-import { clone, matVec, solve, zeros } from './linalg';
+import { c2d, clone, matVec, solve, transpose, zeros } from './linalg';
 import { linearizeBlock } from './linearize';
+import { lqr } from './lqr';
 import { controllabilityRank } from './stability';
 import { Param } from './types';
 
@@ -267,5 +268,243 @@ export function tunePidZn(
     Kd,
     Tf: Math.max(0.02, 0.05 * Pu),
     note: `Ziegler–Nichols PID from Ku≈${Ku.toFixed(3)}, Pu≈${Pu.toFixed(3)} s.`,
+  };
+}
+
+export interface CompensatorTf {
+  numerator: string;
+  denominator: string;
+  note: string;
+}
+
+export interface LqiResult {
+  Kx: number[];
+  Ki: number;
+  polesClosed: { real: number; imag: number }[];
+  note: string;
+}
+
+export interface ObserverGainResult {
+  L: number[];
+  poles: { real: number; imag: number }[];
+  note: string;
+}
+
+function plantProxyC(n: number): number[] {
+  const C = new Array(n).fill(0);
+  C[0] = 1;
+  return C;
+}
+
+function plantDcAndTau(
+  A: number[][],
+  B: number[][]
+): { Kdc: number; tau: number; C: number[] } {
+  const n = A.length;
+  const C = plantProxyC(n);
+  const AinvB = solve(A, B.map((r) => r[0] ?? 0));
+  if (!AinvB) throw new Error('Plant is singular at the operating point.');
+  const Kdc = -C.reduce((s, c, i) => s + c * AinvB[i], 0);
+  if (!(Math.abs(Kdc) > 1e-9)) throw new Error('Plant DC gain is ~0 — pick another output/state.');
+  const poles = eigenvalues(A);
+  const stable = poles.filter((p) => p.real < 0);
+  const tau = stable.length ? Math.max(...stable.map((p) => 1 / Math.max(1e-6, -p.real))) : 1;
+  return { Kdc, tau, C };
+}
+
+/** PI-only IMC (Kd = 0). */
+export function tunePiImc(
+  blockType: string,
+  parameters: Record<string, Param>,
+  opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
+): PidGains {
+  const full = tunePidImc(blockType, parameters, opts);
+  return { ...full, Kd: 0, note: full.note.replace('PID', 'PI') + ' (Kd=0).' };
+}
+
+/** PD from DC gain / τ — no integral. */
+export function tunePd(
+  blockType: string,
+  parameters: Record<string, Param>,
+  opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
+): PidGains {
+  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0);
+  const B1 = B.map((row) => [row[0] ?? 0]);
+  const { Kdc, tau } = plantDcAndTau(A, B1);
+  const lambda = Math.max(opts.lambda ?? 0.25 * tau, 0.05 * tau, 1e-3);
+  const Kp = tau / (Kdc * lambda);
+  const Kd = 0.25 * Kp * tau;
+  return {
+    Kp,
+    Ki: 0,
+    Kd,
+    Tf: Math.max(0.02, 0.1 * lambda),
+    note: `PD from DC=${Kdc.toFixed(3)}, τ≈${tau.toFixed(3)}, λ=${lambda.toFixed(3)}.`,
+  };
+}
+
+/** Proportional-only: bandwidth ≈ 1/λ. */
+export function tuneP(
+  blockType: string,
+  parameters: Record<string, Param>,
+  opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
+): PidGains {
+  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0);
+  const B1 = B.map((row) => [row[0] ?? 0]);
+  const { Kdc, tau } = plantDcAndTau(A, B1);
+  const lambda = Math.max(opts.lambda ?? 0.4 * tau, 0.05 * tau, 1e-3);
+  const Kp = 1 / (Kdc * lambda);
+  return {
+    Kp,
+    Ki: 0,
+    Kd: 0,
+    Tf: 0.05,
+    note: `P-only from DC=${Kdc.toFixed(3)}, λ=${lambda.toFixed(3)}.`,
+  };
+}
+
+/** LQR with integral augmentation on first-state tracking error. */
+export function designLqi(
+  A: number[][],
+  B: number[][],
+  Qdiag: number[],
+  R: number,
+  Qi: number
+): LqiResult {
+  const n = A.length;
+  const C = plantProxyC(n);
+  const na = n + 1;
+  const Aaug = zeros(na);
+  const Baug = zeros(na, 1);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) Aaug[i][j] = A[i][j];
+    Baug[i][0] = B[i]?.[0] ?? 0;
+  }
+  for (let j = 0; j < n; j++) Aaug[n][j] = -C[j];
+  const Qaug = Qdiag.slice(0, n);
+  while (Qaug.length < n) Qaug.push(1);
+  Qaug.push(Math.max(1e-6, Qi));
+  const result = lqr(Aaug, Baug, Qaug, R);
+  const Kx = result.K.slice(0, n);
+  const Ki = result.K[n] ?? 0;
+  return {
+    Kx,
+    Ki,
+    polesClosed: result.polesClosed,
+    note: `LQI with Qi=${Qi.toFixed(2)} — state gains k0… plus integral Ki=${Ki.toFixed(3)}.`,
+  };
+}
+
+/** Dual LQR observer gain L for ẋ̂ = Ax̂ + Bu + L(y − Cx̂), C = [1 0 …]. */
+export function designObserverLqr(A: number[][], Qdiag: number[], R: number): ObserverGainResult {
+  const n = A.length;
+  const C = [plantProxyC(n)]; // 1×n
+  const CT = transpose(C); // n×1 as B for dual
+  const result = lqr(transpose(A), CT, Qdiag, R);
+  // Dual: L = K^T for SISO output
+  const L = result.K.slice();
+  const Ao = clone(A);
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) Ao[i][j] -= L[i] * C[0][j];
+  return {
+    L,
+    poles: eigenvalues(Ao),
+    note: 'Observer gain from dual LQR (C=[1 0 …]). Wrote L onto Observer block.',
+  };
+}
+
+function fmtPoly(coeffs: number[]): string {
+  return coeffs.map((c) => {
+    if (!Number.isFinite(c)) return '0';
+    const a = Math.abs(c);
+    if (a !== 0 && (a < 1e-4 || a >= 1e4)) return c.toExponential(4);
+    return String(Number(c.toPrecision(6)));
+  }).join(' ');
+}
+
+/** Classic lead: K (τs+1)/(ατs+1), α<1, max phase at ωc. */
+export function designLead(opts: { omegaC: number; phaseBoostDeg: number; K?: number }): CompensatorTf {
+  const wc = Math.max(1e-4, opts.omegaC);
+  const phi = Math.min(70, Math.max(5, opts.phaseBoostDeg)) * (Math.PI / 180);
+  const sin = Math.sin(phi);
+  const alpha = (1 - sin) / (1 + sin);
+  const tau = 1 / (wc * Math.sqrt(alpha));
+  const K = opts.K ?? 1;
+  const num = [K * tau, K];
+  const den = [alpha * tau, 1];
+  return {
+    numerator: fmtPoly(num),
+    denominator: fmtPoly(den),
+    note: `Lead α=${alpha.toFixed(3)}, τ=${tau.toFixed(3)}, ωc=${wc.toFixed(2)} rad/s, φ≈${opts.phaseBoostDeg}°.`,
+  };
+}
+
+/** Lag: α>1 improves low-frequency gain; zero/pole below ωc. */
+export function designLag(opts: { omegaC: number; alpha?: number; K?: number }): CompensatorTf {
+  const wc = Math.max(1e-4, opts.omegaC);
+  const alpha = Math.max(1.5, opts.alpha ?? 10);
+  const tau = 10 / wc;
+  const K = opts.K ?? 1;
+  const num = [K * tau, K];
+  const den = [alpha * tau, 1];
+  return {
+    numerator: fmtPoly(num),
+    denominator: fmtPoly(den),
+    note: `Lag α=${alpha.toFixed(2)}, τ=${tau.toFixed(3)}, ωc≈${wc.toFixed(2)} rad/s.`,
+  };
+}
+
+/** Cascade lead×lag as one TF (convolution of num/den). */
+export function designLeadLag(opts: {
+  omegaC: number;
+  phaseBoostDeg: number;
+  lagAlpha?: number;
+  K?: number;
+}): CompensatorTf {
+  const lead = designLead(opts);
+  const lag = designLag({ omegaC: opts.omegaC / 10, alpha: opts.lagAlpha ?? 8, K: 1 });
+  const n1 = lead.numerator.split(/\s+/).map(Number);
+  const d1 = lead.denominator.split(/\s+/).map(Number);
+  const n2 = lag.numerator.split(/\s+/).map(Number);
+  const d2 = lag.denominator.split(/\s+/).map(Number);
+  const conv = (a: number[], b: number[]) => {
+    const out = new Array(a.length + b.length - 1).fill(0);
+    for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) out[i + j] += a[i] * b[j];
+    return out;
+  };
+  const K = opts.K ?? 1;
+  const num = conv(n1, n2).map((v) => v * K);
+  const den = conv(d1, d2);
+  return {
+    numerator: fmtPoly(num),
+    denominator: fmtPoly(den),
+    note: `Lead–lag cascade · ${lead.note} · ${lag.note}`,
+  };
+}
+
+/**
+ * Practical H∞-ish loop shaping: place a lead at ωc for a target phase margin boost.
+ * Not a full γ-iteration — useful shaping without SDP.
+ */
+export function designHinfLoopShape(opts: { omegaC: number; phaseBoostDeg?: number; K?: number }): CompensatorTf {
+  const lead = designLead({
+    omegaC: opts.omegaC,
+    phaseBoostDeg: opts.phaseBoostDeg ?? 50,
+    K: opts.K ?? 1,
+  });
+  return {
+    ...lead,
+    note: `H∞ loop-shaping approx. — ${lead.note}`,
+  };
+}
+
+/** Discrete deadbeat: c2d then Ackermann with all poles at 0. */
+export function designDeadbeat(A: number[][], B: number[][], Ts: number): PolePlacementResult {
+  const ts = Math.max(1e-4, Ts);
+  const { Ad, Bd } = c2d(A, B, ts);
+  const poles = Ad.map(() => ({ real: 0, imag: 0 }));
+  const result = placePolesSiso(Ad, Bd, poles);
+  return {
+    ...result,
+    note: `Deadbeat (discrete, Ts=${ts}) — poles at z=0 mapped to continuous gains k0… (approximate).`,
   };
 }

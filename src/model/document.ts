@@ -52,4 +52,11 @@ export const DEFAULT_DESIGN: DesignConfig = {
   xOp: '',
   uOp: '0',
   analysis: ['poles', 'ctrb', 'damping', 'margins', 'polemap', 'bode', 'nyquist', 'nichols', 'rlocus'],
+  controller: 'lqr',
+  poles: '-2 -3 -4 -5',
+  pidLambda: 0,
+  Qi: 20,
+  omegaC: 3,
+  phaseBoostDeg: 45,
+  sampleTime: 0.02,
 };
