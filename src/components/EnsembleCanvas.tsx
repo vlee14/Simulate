@@ -3,8 +3,10 @@ import { McCampaignStats, PercentileBand } from '../engine/mcStats';
 import {
   formatTick,
   logDecadeTicks,
+  niceBounds,
   niceTicks,
   nicholsPhaseSeries,
+  symmetricLimit,
   wrapNicholsPhase,
 } from '../engine/plotAxes';
 import { FreqPoint, RootLocusBranch, StabilityReport } from '../engine/stability';
@@ -366,7 +368,20 @@ export function EnsembleChart({
         ...branches.flatMap((b) => b.points),
       ];
       if (!pts.length) return;
-      const lim = Math.max(1, ...pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)))) * (kind === 'rlocus' ? 1.2 : 1.15);
+      const focus = [
+        ...(nominal?.polesOpen ?? []),
+        ...(nominal?.polesClosed ?? []),
+        ...(selected?.polesClosed ?? []),
+      ];
+      const lim = symmetricLimit(
+        pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag))),
+        {
+          floor: 1,
+          padFrac: kind === 'rlocus' ? 0.15 : 0.12,
+          percentile: kind === 'poles' && (campaign?.poleCloud?.length ?? 0) > 40 ? 0.92 : 0.98,
+          include: focus.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag))),
+        }
+      );
       const toX = (re: number) => pad.l + ((re + lim) / (2 * lim)) * (plotW - pad.l - pad.r);
       const toY = (im: number) => plotH - pad.b - ((im + lim) / (2 * lim)) * (plotH - pad.t - pad.b);
       const ticks = niceTicks(-lim, lim, 5);
@@ -437,14 +452,17 @@ export function EnsembleChart({
       if (band) ys.push(...band.p05, ...band.p95, ...band.p50);
       for (const p of nom) ys.push(kind === 'bode-mag' ? p.magDb : p.phaseDeg);
       for (const t of ensembleFreq ?? []) for (const p of t.freq) ys.push(kind === 'bode-mag' ? p.magDb : p.phaseDeg);
-      let yMin = Math.min(...ys.filter(Number.isFinite));
-      let yMax = Math.max(...ys.filter(Number.isFinite));
-      if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) return;
-      if (yMax - yMin < 8) {
-        const mid = 0.5 * (yMax + yMin);
-        yMin = mid - 4;
-        yMax = mid + 4;
-      }
+      const yRawMin = Math.min(...ys.filter(Number.isFinite));
+      const yRawMax = Math.max(...ys.filter(Number.isFinite));
+      if (!Number.isFinite(yRawMin) || !Number.isFinite(yRawMax)) return;
+      const yWin = niceBounds(yRawMin, yRawMax, {
+        padFrac: 0.12,
+        minSpan: kind === 'bode-mag' ? 10 : 30,
+        anchors: [0],
+        targetTicks: 5,
+      });
+      const yMin = yWin.min;
+      const yMax = yWin.max;
       const xMin = band?.x[0] ?? Math.log10(nom[0]?.w ?? 1e-3);
       const xMax = band?.x[(band?.x.length ?? 1) - 1] ?? Math.log10(nom[nom.length - 1]?.w ?? 1e3);
       const toX = (lx: number) => pad.l + ((lx - xMin) / (xMax - xMin || 1)) * (plotW - pad.l - pad.r);
@@ -539,27 +557,28 @@ export function EnsembleChart({
 
     if (kind === 'nyquist') {
       const nom = nominal?.freq ?? [];
-      const vals = [
-        ...nom.flatMap((p) => [p.re, p.im]),
-        ...(ensembleFreq ?? []).flatMap((t) => t.freq.flatMap((p) => [p.re, p.im])),
+      // Focus near the critical point; ignore huge low-frequency |L| outliers.
+      const near = [
+        ...nom.filter((p) => p.magDb <= 20),
+        ...(ensembleFreq ?? []).flatMap((t) => t.freq.filter((p) => p.magDb <= 20)),
       ];
-      let lim = Math.max(1, ...vals.map((v) => Math.abs(v))) * 1.15;
-      lim = Math.min(lim, 20);
+      const focusVals = (near.length >= 8 ? near : [...nom, ...(ensembleFreq ?? []).flatMap((t) => t.freq)]).flatMap(
+        (p) => [p.re, p.im]
+      );
+      const lim = symmetricLimit(focusVals, { floor: 2, ceil: 12, padFrac: 0.1, percentile: 0.9, include: [1] });
       const toX = (re: number) => pad.l + ((re + lim) / (2 * lim)) * (plotW - pad.l - pad.r);
       const toY = (im: number) => plotH - pad.b - ((im + lim) / (2 * lim)) * (plotH - pad.t - pad.b);
       const ticks = niceTicks(-lim, lim, 5);
       const alpha = (ensembleFreq?.length ?? 0) > 80 ? 0.1 : 0.35;
+      const clipSeries = (series: { re: number; im: number }[]) =>
+        series
+          .filter((p) => Math.abs(p.re) <= lim * 1.02 && Math.abs(p.im) <= lim * 1.02)
+          .map((p) => ({ x: toX(p.re), y: toY(p.im) }));
       for (const t of ensembleFreq ?? []) {
-        strokeSeries(
-          ctx,
-          t.freq.filter((p) => Math.abs(p.re) <= lim * 1.05 && Math.abs(p.im) <= lim * 1.05).map((p) => ({ x: toX(p.re), y: toY(p.im) })),
-          theme.mc,
-          1,
-          alpha
-        );
+        strokeSeries(ctx, clipSeries(t.freq), theme.mc, 1, alpha);
       }
-      if (nom.length) strokeSeries(ctx, nom.map((p) => ({ x: toX(p.re), y: toY(p.im) })), theme.nom, 2.1);
-      if (selected?.freq?.length) strokeSeries(ctx, selected.freq.map((p) => ({ x: toX(p.re), y: toY(p.im) })), theme.sel, 1.8);
+      if (nom.length) strokeSeries(ctx, clipSeries(nom), theme.nom, 2.1);
+      if (selected?.freq?.length) strokeSeries(ctx, clipSeries(selected.freq), theme.sel, 1.8);
       ctx.strokeStyle = 'rgba(196,92,38,0.55)';
       ctx.lineWidth = 1.2;
       ctx.beginPath();
@@ -590,14 +609,28 @@ export function EnsembleChart({
       const nom = nominal?.freq ?? [];
       const all = [...nom, ...(ensembleFreq ?? []).flatMap((t) => t.freq)];
       if (all.length < 2) return;
-      // Nichols window: wrap phase into [−180°, 180°].
+      // Nichols window: wrap phase into [−180°, 180°], frame data tightly.
       const wrapped = all.map((p) => ({ phaseDeg: wrapNicholsPhase(p.phaseDeg), magDb: p.magDb }));
-      let phMin = Math.min(-180, ...wrapped.map((p) => p.phaseDeg));
-      let phMax = Math.max(180, ...wrapped.map((p) => p.phaseDeg));
-      phMin = Math.min(phMin, -180);
-      phMax = Math.max(phMax, 180);
-      let magMin = Math.min(...all.map((p) => p.magDb), -40);
-      let magMax = Math.max(...all.map((p) => p.magDb), 20);
+      const phWin = niceBounds(
+        Math.min(...wrapped.map((p) => p.phaseDeg)),
+        Math.max(...wrapped.map((p) => p.phaseDeg)),
+        {
+          padFrac: 0.08,
+          minSpan: 90,
+          anchors: [-180, 0, 180],
+          clamp: { min: -180, max: 180 },
+          targetTicks: 5,
+        }
+      );
+      const magWin = niceBounds(
+        Math.min(...wrapped.map((p) => p.magDb)),
+        Math.max(...wrapped.map((p) => p.magDb)),
+        { padFrac: 0.12, minSpan: 20, anchors: [0], targetTicks: 5 }
+      );
+      const phMin = phWin.min;
+      const phMax = phWin.max;
+      const magMin = magWin.min;
+      const magMax = magWin.max;
       const toX = (ph: number) => pad.l + ((ph - phMin) / (phMax - phMin || 1)) * (plotW - pad.l - pad.r);
       const toY = (db: number) => pad.t + ((magMax - db) / (magMax - magMin || 1)) * (plotH - pad.t - pad.b);
       const alpha = (ensembleFreq?.length ?? 0) > 80 ? 0.1 : 0.35;
