@@ -314,6 +314,12 @@ export function frequencyResponse(A: number[][], B: number[][], K: number[], n =
   return points;
 }
 
+function lerpLogFreq(w0: number, w1: number, t: number): number {
+  const a = Math.log(Math.max(w0, 1e-16));
+  const b = Math.log(Math.max(w1, 1e-16));
+  return Math.exp(a + t * (b - a));
+}
+
 export function loopMargins(A: number[][], B: number[][], K: number[], freq?: FreqPoint[]): MarginResult {
   if (!K.some((v) => Math.abs(v) > 1e-12)) {
     return {
@@ -326,6 +332,7 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
     };
   }
   const points = freq ?? frequencyResponse(A, B, K, 200);
+  // Primary PM at the lowest-frequency |L|=1 crossing; GM at the most critical neg-real crossing.
   let gainCrossover: number | null = null;
   let phaseMargin: number | null = null;
   let phaseCrossover: number | null = null;
@@ -336,18 +343,31 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
     if (prev) {
       if ((prev.mag - 1) * (p.mag - 1) <= 0 && prev.mag !== p.mag) {
         const t = (1 - prev.mag) / (p.mag - prev.mag);
-        gainCrossover = prev.w + t * (p.w - prev.w);
-        const ph = prev.phaseDeg + t * (p.phaseDeg - prev.phaseDeg);
-        phaseMargin = 180 + ph;
+        if (t >= 0 && t <= 1) {
+          const w = lerpLogFreq(prev.w, p.w, t);
+          const ph = prev.phaseDeg + t * (p.phaseDeg - prev.phaseDeg);
+          const pm = 180 + ph;
+          // First (lowest-ω) gain crossover matches classical margin() convention.
+          if (gainCrossover == null || w < gainCrossover) {
+            gainCrossover = w;
+            phaseMargin = pm;
+          }
+        }
       }
-      const p0 = prev.phaseDeg;
-      const p1 = p.phaseDeg;
-      if ((p0 + 180) * (p1 + 180) <= 0 && Math.abs(p1 - p0) < 120) {
-        const t = (-180 - p0) / (p1 - p0 || 1e-12);
-        const magCross = prev.mag + t * (p.mag - prev.mag);
-        if (magCross > 1e-12) {
-          phaseCrossover = prev.w + t * (p.w - prev.w);
-          gainMarginDb = -20 * Math.log10(magCross);
+      // Phase crossover ≡ crossing the negative real axis (robust to unwrapped phase).
+      if (prev.im * p.im <= 0 && Math.abs(p.im - prev.im) > 1e-18) {
+        const t = -prev.im / (p.im - prev.im);
+        if (t >= 0 && t <= 1) {
+          const re = prev.re + t * (p.re - prev.re);
+          if (re < -1e-12) {
+            const magCross = Math.abs(re);
+            const w = lerpLogFreq(prev.w, p.w, t);
+            const gm = -20 * Math.log10(magCross);
+            if (gainMarginDb == null || gm < gainMarginDb) {
+              gainMarginDb = gm;
+              phaseCrossover = w;
+            }
+          }
         }
       }
     }
@@ -355,7 +375,12 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
   }
 
   let delayMarginSec: number | null = null;
-  if (phaseMargin != null && gainCrossover != null && gainCrossover > 1e-12) {
+  if (
+    phaseMargin != null &&
+    phaseMargin > 0 &&
+    gainCrossover != null &&
+    gainCrossover > 1e-12
+  ) {
     delayMarginSec = ((phaseMargin * Math.PI) / 180) / gainCrossover;
   }
 
