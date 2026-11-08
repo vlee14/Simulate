@@ -36,6 +36,11 @@ import { runExperiment } from '../engine/experiments';
 import { decodeDocumentShare, encodeDocumentShare, traceToCsv } from '../engine/exportShare';
 import { compileExpression } from '../engine/expr';
 import { frequencyResponseBatchCpu, packPlant } from '../engine/freqBatch';
+import {
+  expressionUsesSchedule,
+  resolvePidGains,
+  resolveScheduledGain,
+} from '../engine/paramExpr';
 import { designDynamicsLqr, lqr } from '../engine/lqr';
 import { linearizeBlock } from '../engine/linearize';
 import { sampleMcRange } from '../engine/mcSample';
@@ -264,6 +269,29 @@ describe('aircraft 6-DoF (NASA H-1391)', () => {
     const plant = doc.nodes.find((n) => n.blockType === 'aircraft');
     expect(String(plant?.parameters?.paramExprs ?? '')).toContain('rho=');
     expect(doc.design.tOp).toBe(10);
+  });
+});
+
+describe('controller gain schedules', () => {
+  it('resolves Gain k(t,s) and PID gainExprs; s is detected for ports', () => {
+    expect(expressionUsesSchedule('k*(1+0.05*t)')).toBe(false);
+    expect(expressionUsesSchedule('2+0.1*s')).toBe(true);
+    expect(expressionUsesSchedule('sin(t)')).toBe(false);
+
+    expect(resolveScheduledGain({ k: 2 }, { t: 10 })).toBe(2);
+    expect(resolveScheduledGain({ k: 2, kExpr: 'k*(1+0.05*t)' }, { t: 10 })).toBeCloseTo(3, 8);
+    expect(resolveScheduledGain({ k: 1, kExpr: '2+0.1*s' }, { t: 0, s: 5 })).toBeCloseTo(2.5, 8);
+
+    const pid = resolvePidGains(
+      { Kp: 1, Ki: 0, Kd: 0, Tf: 0.05, gainExprs: 'Kp=1+0.1*t; Ki=0.5*(1+s)' },
+      { t: 10, s: 1 }
+    );
+    expect(pid.Kp).toBeCloseTo(2, 8);
+    expect(pid.Ki).toBeCloseTo(1, 8);
+
+    const gainDef = getBlock('gain');
+    const ports = gainDef?.ports({ k: 1, kExpr: '1+s', schedulePort: false });
+    expect(ports?.inputs.some((p) => p.id === 's')).toBe(true);
   });
 });
 

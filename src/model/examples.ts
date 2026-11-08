@@ -468,7 +468,7 @@ export function aircraftDocument(): SimDocument {
     nodes: [
       node('note', 'note', 16, 8, {
         text:
-          '6-DoF (H-1391) with paramExprs: ρ=1.225·exp(−h/8500), m=max(900,1110−0.02·t). Design linearizes at x₀/u₀ with t*=10 s (ask “stable at t=10?”).',
+          '6-DoF (H-1391) with paramExprs: ρ=1.225·exp(−h/8500), m=max(900,1110−0.02·t). Design t*=10 s. Gains: set Schedule k(t,s) on Gain / gainExprs on PID; Analyze freezes at t*/s*.',
       }),
       node('de', 'constant', 40, 120, { value: de0 }, 'δe trim'),
       node('da', 'constant', 40, 200, { value: 0 }, 'δa'),

@@ -169,11 +169,16 @@ export interface DesignConfig {
   /** Custom input vector when opMode is `custom` (space-separated). */
   uOp: string;
   /**
-   * Analysis time t* (s). Freezes time-varying plant parameters (and later gain
-   * schedules) when linearizing — e.g. “is the loop stable at t = 10 s?”.
+   * Analysis time t* (s). Freezes time-varying plant parameters and controller
+   * gain schedules when linearizing — e.g. “is the loop stable at t = 10 s?”.
    * Ignored for `live` mode, which uses the simulator clock.
    */
   tOp: number;
+  /**
+   * Frozen measured schedule parameter s* for gain schedules that depend on `s`
+   * (altitude, dynamic pressure, …). Simulation still reads the live `s` port.
+   */
+  sOp: number;
   /** Which stability reports to compute / show. */
   analysis: AnalysisOption[];
   /** Active controller synthesis method. */

@@ -2,6 +2,11 @@ import { DOMAIN_BLOCKS } from './domains';
 import { compileExpression, expressionInputCount } from './expr';
 import { IO_BLOCKS } from './io';
 import { zeros } from './linalg';
+import {
+  expressionUsesSchedule,
+  resolvePidGains,
+  resolveScheduledGain,
+} from './paramExpr';
 import { BlockContext, BlockDefinition, Param, ParamSpec, PortDef } from './types';
 
 function num(p: Record<string, Param>, key: string, fallback = 0): number {
@@ -313,16 +318,41 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'gain',
     category: 'Math',
     name: 'Gain',
-    description: 'Multiplies by a constant',
+    description: 'Multiplies by a constant or a scheduled gain k(t,s)',
     renderer: 'sim',
-    defaultParameters: { k: 1 },
-    parameters: [numberField('k', 'Gain', undefined, 0.1)],
+    defaultParameters: { k: 1, kExpr: '', schedulePort: false },
+    parameters: [
+      numberField('k', 'Gain k', 'Gain', 0.1, 'Nominal / constant gain when Schedule is empty'),
+      {
+        key: 'kExpr',
+        label: 'Schedule k(t,s)',
+        type: 'string',
+        wide: true,
+        group: 'Gain',
+        help: 'Optional. Expression in t, s (measured param), and k (nominal). Empty = constant k. Examples: k*(1+0.05*t) · 2+0.1*s',
+      },
+      {
+        key: 'schedulePort',
+        label: 'Schedule input s',
+        type: 'boolean',
+        group: 'Gain',
+        help: 'Expose port s for a measured scheduling signal (also auto-on when the expression uses s).',
+      },
+    ],
     hasDirectFeedthrough: feed,
-    ports: io(scalarIn()),
+    ports: (p) => {
+      const wantS = on(p, 'schedulePort') || expressionUsesSchedule(text(p, 'kExpr', ''));
+      return {
+        inputs: wantS ? [...scalarIn(), { id: 's', name: 's' }] : scalarIn(),
+        outputs: scalarOut(),
+      };
+    },
     continuousStates: none,
     discreteStates: none,
     outputs: (ctx) => {
-      ctx.outputs.out = num(ctx.parameters, 'k', 1) * (ctx.inputs.in ?? 0);
+      const u = ctx.inputs.in ?? 0;
+      const k = resolveScheduledGain(ctx.parameters, { t: ctx.t, s: ctx.inputs.s ?? 0, u });
+      ctx.outputs.out = k * u;
     },
   },
   {
@@ -626,29 +656,56 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'pid',
     category: 'Continuous',
     name: 'PID',
-    description: 'Parallel PID with a filtered derivative',
+    description: 'Parallel PID with a filtered derivative; gains may be scheduled vs t or s',
     renderer: 'sim',
-    defaultParameters: { Kp: 1, Ki: 0, Kd: 0, Tf: 0.05, limitOutput: false, upperLimit: 20, lowerLimit: -20 },
+    defaultParameters: {
+      Kp: 1,
+      Ki: 0,
+      Kd: 0,
+      Tf: 0.05,
+      gainExprs: '',
+      schedulePort: false,
+      limitOutput: false,
+      upperLimit: 20,
+      lowerLimit: -20,
+    },
     parameters: [
       numberField('Kp', 'Kp', 'Gains'),
       numberField('Ki', 'Ki', 'Gains'),
       numberField('Kd', 'Kd', 'Gains'),
       numberField('Tf', 'Derivative filter Tf', 'Gains', 0.01),
+      {
+        key: 'gainExprs',
+        label: 'Gain schedules',
+        type: 'string',
+        wide: true,
+        group: 'Gains',
+        help: 'Optional. Override Kp/Ki/Kd/Tf with expressions in t and s. Example: Kp=1+0.1*t; Ki=0.5*(1+0.05*s)',
+      },
+      {
+        key: 'schedulePort',
+        label: 'Schedule input s',
+        type: 'boolean',
+        group: 'Gains',
+        help: 'Expose port s for a measured scheduling signal (also auto-on when gainExprs uses s).',
+      },
       { key: 'limitOutput', label: 'Limit output', type: 'boolean', group: 'Limits' },
       numberField('upperLimit', 'Upper', 'Limits'),
       numberField('lowerLimit', 'Lower', 'Limits'),
     ],
     hasDirectFeedthrough: feed,
-    ports: io([{ id: 'in', name: 'e' }]),
+    ports: (p) => {
+      const wantS = on(p, 'schedulePort') || expressionUsesSchedule(text(p, 'gainExprs', ''));
+      const inputs = [{ id: 'in', name: 'e' }];
+      if (wantS) inputs.push({ id: 's', name: 's' });
+      return { inputs, outputs: scalarOut() };
+    },
     continuousStates: () => 2,
     discreteStates: none,
     outputs: (ctx) => {
       const e = ctx.inputs.in ?? 0;
-      const Tf = Math.max(1e-4, num(ctx.parameters, 'Tf', 0.05));
-      let y =
-        num(ctx.parameters, 'Kp', 1) * e +
-        num(ctx.parameters, 'Ki', 0) * ctx.state[0] +
-        (num(ctx.parameters, 'Kd', 0) / Tf) * (e - ctx.state[1]);
+      const g = resolvePidGains(ctx.parameters, { t: ctx.t, s: ctx.inputs.s ?? 0 });
+      let y = g.Kp * e + g.Ki * ctx.state[0] + (g.Kd / g.Tf) * (e - ctx.state[1]);
       if (on(ctx.parameters, 'limitOutput')) {
         y = Math.min(num(ctx.parameters, 'upperLimit', 20), Math.max(num(ctx.parameters, 'lowerLimit', -20), y));
       }
@@ -656,19 +713,16 @@ export const BLOCKS: BlockDefinition[] = [
     },
     derivatives: (ctx) => {
       const e = ctx.inputs.in ?? 0;
-      const Tf = Math.max(1e-4, num(ctx.parameters, 'Tf', 0.05));
+      const g = resolvePidGains(ctx.parameters, { t: ctx.t, s: ctx.inputs.s ?? 0 });
       let iDot = e;
       if (on(ctx.parameters, 'limitOutput')) {
-        const yRaw =
-          num(ctx.parameters, 'Kp', 1) * e +
-          num(ctx.parameters, 'Ki', 0) * ctx.state[0] +
-          (num(ctx.parameters, 'Kd', 0) / Tf) * (e - ctx.state[1]);
+        const yRaw = g.Kp * e + g.Ki * ctx.state[0] + (g.Kd / g.Tf) * (e - ctx.state[1]);
         const hi = num(ctx.parameters, 'upperLimit', 20);
         const lo = num(ctx.parameters, 'lowerLimit', -20);
         if ((yRaw >= hi && e > 0) || (yRaw <= lo && e < 0)) iDot = 0;
       }
       ctx.deriv[0] = iDot;
-      ctx.deriv[1] = (e - ctx.state[1]) / Tf;
+      ctx.deriv[1] = (e - ctx.state[1]) / g.Tf;
     },
   },
   {

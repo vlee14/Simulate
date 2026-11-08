@@ -5,6 +5,7 @@ import { designDynamicsLqr } from '../engine/lqr';
 import { linearizeBlock } from '../engine/linearize';
 import { runMcCampaign, sampleToFreqPoints } from '../engine/mcCampaignRunner';
 import { applyMonteCarlo, countUncertainParams, recommendMcRuns } from '../engine/montecarlo';
+import { resolveScheduledGain } from '../engine/paramExpr';
 import { runSensitivity } from '../engine/sensitivity';
 import { controllerOption } from '../engine/controllers';
 import {
@@ -341,20 +342,33 @@ function formatAnalysisTime(t: number): string {
   return String(Number(t.toFixed(4)));
 }
 
+function scheduleFreeze(design: DesignConfig): number {
+  const s = Number(design.sOp);
+  return Number.isFinite(s) ? s : 0;
+}
+
+function formatOpLabel(base: string, t: number, s: number): string {
+  const parts = [`t*=${formatAnalysisTime(t)} s`];
+  if (Math.abs(s) > 1e-12) parts.push(`s*=${formatAnalysisTime(s)}`);
+  return `${base} · ${parts.join(' · ')}`;
+}
+
 function resolveOperatingPoint(
   plant: GraphNode,
   design: DesignConfig
-): { x: number[]; u: number[]; t: number; label: string } {
+): { x: number[]; u: number[]; t: number; s: number; label: string } {
   const n = plantStateDim(plant);
   const m = plantInputDim(plant);
   const mode = design.opMode ?? 'equilibrium';
+  const s = scheduleFreeze(design);
   if (mode === 'equilibrium') {
     const t = analysisTime(design);
     return {
       x: new Array(n).fill(0),
       u: new Array(m).fill(0),
       t,
-      label: `equilibrium (0) · t*=${formatAnalysisTime(t)} s`,
+      s,
+      label: formatOpLabel('equilibrium (0)', t, s),
     };
   }
   if (mode === 'x0') {
@@ -363,25 +377,29 @@ function resolveOperatingPoint(
       x: defaultPlantX0(plant, n),
       u: parseVector(design.uOp || '0', m, 0),
       t,
-      label: `plant x₀ · t*=${formatAnalysisTime(t)} s`,
+      s,
+      label: formatOpLabel('plant x₀', t, s),
     };
   }
   if (mode === 'live') {
     const t = analysisTime(design, true);
     const live = engine?.readState(plant.id) ?? [];
+    const liveBase = `live @ t=${formatAnalysisTime(t)} s`;
     if (live.length === n) {
       return {
         x: live,
         u: parseVector(design.uOp || '0', m, 0),
         t,
-        label: `live @ t=${formatAnalysisTime(t)} s`,
+        s,
+        label: Math.abs(s) > 1e-12 ? `${liveBase} · s*=${formatAnalysisTime(s)}` : liveBase,
       };
     }
     return {
       x: defaultPlantX0(plant, n),
       u: parseVector(design.uOp || '0', m, 0),
       t,
-      label: `live unavailable — used x₀ · t*=${formatAnalysisTime(t)} s`,
+      s,
+      label: formatOpLabel('live unavailable — used x₀', t, s),
     };
   }
   const t = analysisTime(design);
@@ -389,19 +407,20 @@ function resolveOperatingPoint(
     x: parseVector(design.xOp || '', n, 0),
     u: parseVector(design.uOp || '0', m, 0),
     t,
-    label: `custom · t*=${formatAnalysisTime(t)} s`,
+    s,
+    label: formatOpLabel('custom', t, s),
   };
 }
 
-function readControllerGains(n: number): number[] {
+function readControllerGains(n: number, t = 0, s = 0): number[] {
   const graph = graphNow();
   const K = new Array(n).fill(0);
   for (let i = 0; i < n; i++) {
     const role = `k${i}`;
     const node = graph.nodes.find((item) => item.id === role || item.role === role);
     if (!node || node.blockType !== 'gain') continue;
-    // Stored gain is −Kᵢ for u = Σ ki zi
-    K[i] = -Number(node.parameters.k ?? 0);
+    // Stored gain is −Kᵢ for u = Σ ki zi; honor kExpr schedules at (t*, s*).
+    K[i] = -resolveScheduledGain(node.parameters, { t, s });
   }
   return K;
 }
@@ -740,7 +759,7 @@ export function analyzeController(): void {
     const op = resolveOperatingPoint(plant, state.design);
     const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u, 1e-6, op.t);
     const B1 = B.map((row) => [row[0] ?? 0]);
-    const K = readControllerGains(A.length);
+    const K = readControllerGains(A.length, op.t, op.s);
     publishDesignView({
       summary: `Stability at ${op.label}.`,
       plant,
@@ -934,7 +953,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         const id = writePidGains(gains);
         if (!id) throw new Error('Add a PID block.');
         summary = gains.note;
-        K = readControllerGains(plantStateDim(plant));
+        K = readControllerGains(plantStateDim(plant), op.t, op.s);
         appliedGains = [
           { id: `${id}.Kp`, value: gains.Kp },
           { id: `${id}.Ki`, value: gains.Ki },
@@ -957,7 +976,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         const id = writeTransfer(tf.numerator, tf.denominator);
         if (!id) throw new Error('Add a Transfer Fcn block.');
         summary = tf.note;
-        K = readControllerGains(plantStateDim(plant));
+        K = readControllerGains(plantStateDim(plant), op.t, op.s);
         appliedGains = [
           { id: `${id}.num`, value: 0 },
           { id: `${id}.den`, value: 0 },
@@ -969,7 +988,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         const id = writeObserverL(obs.L);
         if (!id) throw new Error('Add an Observer block.');
         summary = obs.note;
-        K = readControllerGains(plantStateDim(plant));
+        K = readControllerGains(plantStateDim(plant), op.t, op.s);
         appliedGains = obs.L.map((v, i) => ({ id: `L${i}`, value: v }));
         break;
       }

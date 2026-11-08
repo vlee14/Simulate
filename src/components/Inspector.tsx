@@ -601,10 +601,17 @@ function DesignPane() {
             </label>
             <NumberField
               label="t* (time, s)"
-              help="Freeze time-varying plant params at this instant (e.g. stable at t=10 s?). Live mode uses the simulator clock instead."
+              help="Freeze time-varying plant params and gain schedules at this instant (e.g. stable at t=10 s?). Live mode uses the simulator clock instead."
               value={design.tOp ?? 0}
               step={0.1}
               onCommit={(value) => setDesignOp({ tOp: Math.max(0, value) })}
+            />
+            <NumberField
+              label="s* (schedule)"
+              help="Freeze measured schedule variable s for gain schedules (altitude, dynamic pressure, …). Connect Gain/PID port s in the diagram for live scheduling."
+              value={design.sOp ?? 0}
+              step={0.1}
+              onCommit={(value) => setDesignOp({ sOp: value })}
             />
             <div className="design-actions">
               <button type="button" className="ghost" onClick={() => captureLinearizationPoint('x0')}>

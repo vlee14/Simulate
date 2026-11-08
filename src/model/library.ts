@@ -62,6 +62,7 @@ export function parseDocument(raw: unknown): SimDocument {
       xOp: typeof doc.design?.xOp === 'string' ? doc.design.xOp : DEFAULT_DESIGN.xOp,
       uOp: typeof doc.design?.uOp === 'string' ? doc.design.uOp : DEFAULT_DESIGN.uOp,
       tOp: Number.isFinite(Number(doc.design?.tOp)) ? Number(doc.design?.tOp) : DEFAULT_DESIGN.tOp,
+      sOp: Number.isFinite(Number(doc.design?.sOp)) ? Number(doc.design?.sOp) : DEFAULT_DESIGN.sOp,
       analysis: Array.isArray(doc.design?.analysis) && doc.design.analysis.length
         ? doc.design.analysis
         : DEFAULT_DESIGN.analysis.slice(),
