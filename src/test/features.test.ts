@@ -20,9 +20,12 @@ import {
 import { QUADROTOR_ODE, CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
 import { SCENE_AIRCRAFT, SCENE_CART_PENDULUM, SCENE_QUAD, SCENE_ROTOR, SCENE_TANK } from '../model/scenes';
 import {
+  AIRCRAFT_X0_SEED,
   DEFAULT_AIRCRAFT,
   aircraftDerivatives,
+  aircraftPlantVars,
   linearizeAircraft,
+  resolveAircraftParams,
   trimAircraft,
 } from '../engine/aircraft6dof';
 import { getBlock } from '../engine/blocks';
@@ -217,6 +220,44 @@ describe('aircraft 6-DoF (NASA H-1391)', () => {
     expect(PLANT_RECIPES.some((r) => r.id === 'aircraft')).toBe(true);
     expect(SCENE_AIRCRAFT.inputs.includes('xN')).toBe(true);
     expect(aircraftDocument().nodes.some((n) => n.blockType === 'aircraft')).toBe(true);
+  });
+
+  it('resolves scheduled plant parameters from states and time', () => {
+    const params = {
+      ...DEFAULT_AIRCRAFT,
+      paramExprs: 'rho=1.225*exp(-h/8500); m=max(900, 1110-0.02*t)',
+    };
+    const atSL = resolveAircraftParams(params, aircraftPlantVars(AIRCRAFT_X0_SEED, [0, 0, 0, 0.4], 0));
+    // seed h=1000 → ρ ≈ 1.225·e^(−1000/8500)
+    expect(atSL.rho).toBeCloseTo(1.225 * Math.exp(-1000 / 8500), 5);
+    expect(atSL.m).toBeCloseTo(1110, 5);
+
+    const high = resolveAircraftParams(
+      params,
+      aircraftPlantVars([0, 0, 0, 60, 0.05, 0, 0, 0.05, 0, 5000, 0, 0], [0, 0, 0, 0.4], 0)
+    );
+    expect(high.rho).toBeCloseTo(1.225 * Math.exp(-5000 / 8500), 5);
+    expect(high.rho).toBeLessThan(atSL.rho);
+
+    const burned = resolveAircraftParams(
+      params,
+      aircraftPlantVars(AIRCRAFT_X0_SEED, [0, 0, 0, 0.4], 20_000)
+    );
+    expect(burned.m).toBe(900); // floor of max(900, 1110-400)
+
+    const trim = trimAircraft(
+      (x, u) => resolveAircraftParams(params, aircraftPlantVars(x, u, 0)),
+      { V: 60, h: 1000 }
+    );
+    expect(trim.residual).toBeLessThan(1e-4);
+
+    const viaBlock = linearizeBlock('aircraft', { ...params, x0: trim.x.join(' ') }, trim.x, trim.u);
+    expect(viaBlock.A).toHaveLength(12);
+    expect(eigenvalues(viaBlock.A).every((e) => Number.isFinite(e.real))).toBe(true);
+
+    const doc = aircraftDocument();
+    const plant = doc.nodes.find((n) => n.blockType === 'aircraft');
+    expect(String(plant?.parameters.paramExprs ?? '')).toContain('rho=');
   });
 });
 

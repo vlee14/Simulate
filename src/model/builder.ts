@@ -1,6 +1,11 @@
 import { stringifyBlueprint, SubsystemBlueprint } from '../engine/subsystem';
 import { Param, ParamUncertainty } from '../engine/types';
-import { aircraftPlantParameters, CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
+import {
+  AIRCRAFT_SCHEDULE_EXAMPLE,
+  aircraftPlantParameters,
+  CART_DOUBLE_PENDULUM_ODE,
+  QUADROTOR_ODE,
+} from './plants';
 import {
   SCENE_AIRCRAFT,
   SCENE_CART_PENDULUM,
@@ -303,10 +308,15 @@ export const PLANT_RECIPES: PlantRecipe[] = [
   {
     id: 'aircraft',
     name: 'Aircraft 6-DoF',
-    summary: 'NASA H-1391 rigid 6-DoF (pqr, Vαβ, Euler, NED) with linear aero; Design FD-linearizes about trim.',
+    summary:
+      'NASA H-1391 rigid 6-DoF with linear aero and scheduled ρ(h)/m(t); Design FD-linearizes about trim.',
     domain: 'mechanical',
     create: (origin) => {
-      const plant = aircraftPlantParameters({ V: 60, h: 1000 });
+      const plant = aircraftPlantParameters({
+        V: 60,
+        h: 1000,
+        paramExprs: AIRCRAFT_SCHEDULE_EXAMPLE,
+      });
       const u0 = String(plant.u0)
         .trim()
         .split(/[\s,;]+/)

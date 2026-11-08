@@ -2,7 +2,12 @@ import { getBlock } from '../engine/blocks';
 import { designDynamicsLqr } from '../engine/lqr';
 import { GraphEdge, GraphNode, ParamUncertainty } from '../engine/types';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, DocNode, SimDocument } from './document';
-import { aircraftPlantParameters, CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
+import {
+  AIRCRAFT_SCHEDULE_EXAMPLE,
+  aircraftPlantParameters,
+  CART_DOUBLE_PENDULUM_ODE,
+  QUADROTOR_ODE,
+} from './plants';
 import {
   SCENE_AIRCRAFT,
   SCENE_CART_PENDULUM,
@@ -434,7 +439,11 @@ export function pneumaticDocument(): SimDocument {
 
 /** Rigid 6-DoF aircraft (NASA TM 88104 / H-1391): nonlinear plant + Design linearization about trim. */
 export function aircraftDocument(): SimDocument {
-  const plant = aircraftPlantParameters({ V: 60, h: 1000 });
+  const plant = aircraftPlantParameters({
+    V: 60,
+    h: 1000,
+    paramExprs: AIRCRAFT_SCHEDULE_EXAMPLE,
+  });
   const u0 = String(plant.u0)
     .trim()
     .split(/[\s,;]+/)
@@ -444,7 +453,7 @@ export function aircraftDocument(): SimDocument {
   return {
     name: 'Aircraft 6-DoF',
     description:
-      'Nonlinear rigid 6-DoF aircraft (NASA H-1391 state: pqr, Vαβ, Euler, NED) with linear aero and thrust. Open-loop at wings-level trim; Design analyzes the finite-difference linearization about that trim.',
+      'Nonlinear rigid 6-DoF aircraft (NASA H-1391 state: pqr, Vαβ, Euler, NED) with linear aero, thrust, and scheduled ρ(h)/m(t). Open-loop at wings-level trim; Design analyzes the FD linearization about that trim.',
     config: mcConfig({ stepSize: 0.01, stopTime: 40, speed: 4, mcCampaignSize: 500, mcOverlayCount: 24 }),
     design: designConfig({
       opMode: 'x0',
@@ -458,7 +467,7 @@ export function aircraftDocument(): SimDocument {
     nodes: [
       node('note', 'note', 16, 8, {
         text:
-          '6-DoF plant (H-1391): states [p q r V α β φ θ ψ h xN yE], inputs [δe δa δr δt]. Held at cruise trim; Stage shows N/E track. Design → Analyze uses FD linearization at x₀/u₀.',
+          '6-DoF (H-1391) with paramExprs: ρ=1.225·exp(−h/8500), m=max(900,1110−0.02·t). States [p q r V α β φ θ ψ h xN yE]. Design FD-linearizes at x₀/u₀ (schedules re-evaluated).',
       }),
       node('de', 'constant', 40, 120, { value: de0 }, 'δe trim'),
       node('da', 'constant', 40, 200, { value: 0 }, 'δa'),

@@ -9,10 +9,30 @@
  * Aerodynamics are a linear aero-coefficient model (light-aircraft style) so the
  * nonlinear plant is trim-able and finite-difference linearizable for Design.
  */
+import { resolvePlantParameters } from './paramExpr';
 import { Param } from './types';
 
 export const AIRCRAFT_NX = 12;
 export const AIRCRAFT_NU = 4;
+
+/** ASCII aliases for H-1391 states (expressions cannot use Greek glyphs). */
+export const AIRCRAFT_STATE_VARS = [
+  'p',
+  'q',
+  'r',
+  'V',
+  'alpha',
+  'beta',
+  'phi',
+  'theta',
+  'psi',
+  'h',
+  'xN',
+  'yE',
+] as const;
+
+/** Input aliases: de/da/dr/throttle (avoid `dt` — easy to confuse with Δt). */
+export const AIRCRAFT_INPUT_VARS = ['de', 'da', 'dr', 'throttle'] as const;
 
 export type AircraftParams = {
   m: number;
@@ -113,13 +133,7 @@ function num(p: Record<string, Param>, key: string, fallback: number): number {
   return Number.isFinite(v) ? v : fallback;
 }
 
-export function parseAircraftParams(parameters: Record<string, Param> | null | undefined): AircraftParams {
-  const d = DEFAULT_AIRCRAFT;
-  const src = parameters ?? {};
-  const out = { ...d };
-  for (const key of Object.keys(d) as (keyof AircraftParams)[]) {
-    out[key] = num(src, key, d[key]);
-  }
+function clampAircraftParams(out: AircraftParams): AircraftParams {
   out.m = Math.max(1e-3, out.m);
   out.S = Math.max(1e-6, out.S);
   out.b = Math.max(1e-6, out.b);
@@ -127,6 +141,61 @@ export function parseAircraftParams(parameters: Record<string, Param> | null | u
   out.rho = Math.max(1e-6, out.rho);
   out.Tmax = Math.max(0, out.Tmax);
   return out;
+}
+
+/** Bind t, x1…x12 / named states, and u1…u4 / de,da,dr,throttle for param expressions. */
+export function aircraftPlantVars(x: number[], u: number[], t = 0): Record<string, number> {
+  const vars: Record<string, number> = { t };
+  for (let i = 0; i < AIRCRAFT_NX; i++) {
+    const v = x[i] ?? 0;
+    vars[`x${i + 1}`] = v;
+    vars[AIRCRAFT_STATE_VARS[i]!] = v;
+  }
+  for (let i = 0; i < AIRCRAFT_NU; i++) {
+    const v = u[i] ?? 0;
+    vars[`u${i + 1}`] = v;
+    vars[AIRCRAFT_INPUT_VARS[i]!] = v;
+  }
+  vars.u = vars.u1 ?? 0;
+  return vars;
+}
+
+/**
+ * Evaluate aircraft parameters at (x,u,t). Numeric fields are defaults; string
+ * fields and `paramExprs` (e.g. `rho=1.225*exp(-h/8500)`) override them.
+ */
+export function resolveAircraftParams(
+  parameters: Record<string, Param> | null | undefined,
+  vars: Record<string, number> = { t: 0 }
+): AircraftParams {
+  const d = DEFAULT_AIRCRAFT;
+  const keys = Object.keys(d) as (keyof AircraftParams)[];
+  const resolved = resolvePlantParameters(
+    parameters,
+    keys as string[],
+    d as unknown as Record<string, number>,
+    vars
+  );
+  const out = { ...d };
+  for (const key of keys) out[key] = resolved[key] ?? d[key];
+  return clampAircraftParams(out);
+}
+
+/** Numeric-only parse (no schedules). Prefer resolveAircraftParams when expressions may be present. */
+export function parseAircraftParams(parameters: Record<string, Param> | null | undefined): AircraftParams {
+  const d = DEFAULT_AIRCRAFT;
+  const src = parameters ?? {};
+  const out = { ...d };
+  for (const key of Object.keys(d) as (keyof AircraftParams)[]) {
+    out[key] = num(src, key, d[key]);
+  }
+  return clampAircraftParams(out);
+}
+
+export type AircraftParamSource = AircraftParams | ((x: number[], u: number[]) => AircraftParams);
+
+function resolveSource(p: AircraftParamSource, x: number[], u: number[]): AircraftParams {
+  return typeof p === 'function' ? p(x, u) : p;
 }
 
 function parseState(raw: string, fallback: number[]): number[] {
@@ -288,9 +357,10 @@ export type AircraftTrim = {
 /**
  * Approximate wings-level cruise trim at speed V and altitude h:
  * solve α, δe, δt for V̇≈α̇≈q̇≈0 with β=p=q=r=φ=0, θ=α (γ=0).
+ * Pass a function to re-resolve scheduled parameters (ρ(h), m(t), …) each residual.
  */
 export function trimAircraft(
-  p: AircraftParams,
+  p: AircraftParamSource,
   opts: { V?: number; h?: number; iters?: number } = {}
 ): AircraftTrim {
   const V = opts.V ?? 60;
@@ -304,7 +374,7 @@ export function trimAircraft(
   const residualOf = (a: number, elev: number, thr: number) => {
     const x = [0, 0, 0, V, a, 0, 0, a, 0, h, 0, 0];
     const u = [elev, 0, 0, thr];
-    const f = aircraftDerivatives(x, u, p);
+    const f = aircraftDerivatives(x, u, resolveSource(p, x, u));
     return [f[3]!, f[4]!, f[1]!]; // V̇, α̇, q̇
   };
 
@@ -349,7 +419,7 @@ export function trimAircraft(
 
   const x = [0, 0, 0, V, alpha, 0, 0, alpha, 0, h, 0, 0];
   const u = [de, 0, 0, dt];
-  const f = aircraftDerivatives(x, u, p);
+  const f = aircraftDerivatives(x, u, resolveSource(p, x, u));
   const residual = Math.hypot(f[1]!, f[3]!, f[4]!);
   return { x, u, residual };
 }
@@ -358,7 +428,7 @@ export function trimAircraft(
 export function linearizeAircraft(
   x0: number[],
   u0: number[],
-  p: AircraftParams,
+  p: AircraftParamSource,
   eps = 1e-5
 ): { A: number[][]; B: number[][] } {
   const n = AIRCRAFT_NX;
@@ -375,8 +445,8 @@ export function linearizeAircraft(
     const zm = z0.slice();
     zp[j]! += eps;
     zm[j]! -= eps;
-    const fp = aircraftDerivatives(zp, uBase, p);
-    const fm = aircraftDerivatives(zm, uBase, p);
+    const fp = aircraftDerivatives(zp, uBase, resolveSource(p, zp, uBase));
+    const fm = aircraftDerivatives(zm, uBase, resolveSource(p, zm, uBase));
     for (let i = 0; i < n; i++) A[i]![j] = (fp[i]! - fm[i]!) / (2 * eps);
   }
   for (let j = 0; j < m; j++) {
@@ -384,8 +454,8 @@ export function linearizeAircraft(
     const um = uBase.slice();
     up[j]! += eps;
     um[j]! -= eps;
-    const fp = aircraftDerivatives(z0, up, p);
-    const fm = aircraftDerivatives(z0, um, p);
+    const fp = aircraftDerivatives(z0, up, resolveSource(p, z0, up));
+    const fm = aircraftDerivatives(z0, um, resolveSource(p, z0, um));
     for (let i = 0; i < n; i++) B[i]![j] = (fp[i]! - fm[i]!) / (2 * eps);
   }
   return { A, B };

@@ -4,9 +4,10 @@ import {
   AIRCRAFT_STATE_LABELS,
   aircraftDerivatives,
   aircraftInitialState,
+  aircraftPlantVars,
   DEFAULT_AIRCRAFT,
   formatAircraftVector,
-  parseAircraftParams,
+  resolveAircraftParams,
   trimAircraft,
 } from './aircraft6dof';
 import {
@@ -739,12 +740,13 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     category: 'Dynamics',
     name: 'Aircraft 6-DoF',
     description:
-      'Rigid 6-DoF aircraft (NASA TM 88104 / H-1391 state): body rates, V/α/β, Euler angles, NED position. Linear aero + thrust; Design uses FD linearization about trim.',
+      'Rigid 6-DoF aircraft (NASA TM 88104 / H-1391 state): body rates, V/α/β, Euler angles, NED position. Linear aero + thrust; parameters may be expressions of states/inputs/time via paramExprs. Design uses FD linearization about trim.',
     renderer: 'plant',
     defaultParameters: (() => {
       const trim = trimAircraft(DEFAULT_AIRCRAFT, { V: 60, h: 1000 });
       return {
         ...DEFAULT_AIRCRAFT,
+        paramExprs: '',
         x0: formatAircraftVector(trim.x),
         u0: formatAircraftVector(trim.u),
         Vtrim: 60,
@@ -763,6 +765,15 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       numberField('rho', 'Air density ρ', 'Atmosphere', 0.01),
       numberField('g', 'Gravity g', 'Atmosphere', 0.01),
       numberField('Tmax', 'Max thrust (N)', 'Propulsion', 10),
+      {
+        key: 'paramExprs',
+        label: 'Parameter schedules',
+        type: 'string',
+        wide: true,
+        group: 'Schedules',
+        help:
+          'Override numeric params with expressions of t, states (p,q,r,V,alpha,beta,phi,theta,psi,h,xN,yE or x1…x12), and inputs (de,da,dr,throttle or u1…u4). Example: rho=1.225*exp(-h/8500); m=max(900, 1110-0.02*t)',
+      },
       numberField('CL0', 'CL0', 'Aero · lift/drag', 0.01),
       numberField('CLa', 'CL_α', 'Aero · lift/drag', 0.01),
       numberField('CLq', 'CL_q', 'Aero · lift/drag', 0.01),
@@ -826,7 +837,6 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       for (let i = 0; i < AIRCRAFT_NX; i++) ctx.outputs[`y${i}`] = ctx.state[i] ?? 0;
     },
     derivatives: (ctx) => {
-      const p = parseAircraftParams(ctx.parameters);
       const x = Array.from(ctx.state);
       const u = [
         ctx.inputs.u1 ?? 0,
@@ -834,6 +844,7 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
         ctx.inputs.u3 ?? 0,
         ctx.inputs.u4 ?? 0,
       ];
+      const p = resolveAircraftParams(ctx.parameters, aircraftPlantVars(x, u, ctx.t));
       const f = aircraftDerivatives(x, u, p);
       for (let i = 0; i < AIRCRAFT_NX; i++) ctx.deriv[i] = f[i] ?? 0;
     },
@@ -842,10 +853,12 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
 
 /** Recompute wings-level trim into aircraft block parameters (x0 / u0). */
 export function retakeAircraftTrim(parameters: Record<string, Param>): Record<string, Param> {
-  const p = parseAircraftParams(parameters);
   const V = num(parameters, 'Vtrim', 60);
   const h = num(parameters, 'htrim', 1000);
-  const trim = trimAircraft(p, { V, h });
+  const trim = trimAircraft(
+    (x, u) => resolveAircraftParams(parameters, aircraftPlantVars(x, u, 0)),
+    { V, h }
+  );
   return {
     ...parameters,
     x0: formatAircraftVector(trim.x),

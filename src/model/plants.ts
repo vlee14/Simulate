@@ -1,18 +1,33 @@
 /** Reusable plant parameter packs built from generic Dynamics blocks. */
 
 import {
+  aircraftPlantVars,
   DEFAULT_AIRCRAFT,
   formatAircraftVector,
+  resolveAircraftParams,
   trimAircraft,
 } from '../engine/aircraft6dof';
+import { Param } from '../engine/types';
+
+/** ISA-ish exponential atmosphere + slow mass burn — planning example for scheduled plant params. */
+export const AIRCRAFT_SCHEDULE_EXAMPLE =
+  'rho=1.225*exp(-h/8500); m=max(900, 1110-0.02*t)';
 
 /** Trimmed 6-DoF aircraft (NASA H-1391 state) for the dedicated `aircraft` block. */
-export function aircraftPlantParameters(opts: { V?: number; h?: number } = {}) {
+export function aircraftPlantParameters(
+  opts: { V?: number; h?: number; paramExprs?: string } = {}
+) {
   const V = opts.V ?? 60;
   const h = opts.h ?? 1000;
-  const trim = trimAircraft(DEFAULT_AIRCRAFT, { V, h });
+  const paramExprs = opts.paramExprs ?? '';
+  const base: Record<string, Param> = { ...DEFAULT_AIRCRAFT, paramExprs };
+  const trim = trimAircraft(
+    (x, u) => resolveAircraftParams(base, aircraftPlantVars(x, u, 0)),
+    { V, h }
+  );
   return {
     ...DEFAULT_AIRCRAFT,
+    paramExprs,
     Vtrim: V,
     htrim: h,
     x0: formatAircraftVector(trim.x),
