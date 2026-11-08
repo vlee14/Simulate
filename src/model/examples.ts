@@ -2,8 +2,9 @@ import { getBlock } from '../engine/blocks';
 import { designDynamicsLqr } from '../engine/lqr';
 import { GraphEdge, GraphNode, ParamUncertainty } from '../engine/types';
 import { DEFAULT_CONFIG, DEFAULT_DESIGN, DocNode, SimDocument } from './document';
-import { CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
+import { aircraftPlantParameters, CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
 import {
+  SCENE_AIRCRAFT,
   SCENE_CART_PENDULUM,
   SCENE_MASS_SPRING,
   SCENE_QUAD,
@@ -431,6 +432,73 @@ export function pneumaticDocument(): SimDocument {
   };
 }
 
+/** Rigid 6-DoF aircraft (NASA TM 88104 / H-1391): nonlinear plant + Design linearization about trim. */
+export function aircraftDocument(): SimDocument {
+  const plant = aircraftPlantParameters({ V: 60, h: 1000 });
+  const u0 = String(plant.u0)
+    .trim()
+    .split(/[\s,;]+/)
+    .map(Number);
+  const de0 = u0[0] ?? 0;
+  const dt0 = u0[3] ?? 0.4;
+  return {
+    name: 'Aircraft 6-DoF',
+    description:
+      'Nonlinear rigid 6-DoF aircraft (NASA H-1391 state: pqr, Vαβ, Euler, NED) with linear aero and thrust. Open-loop at wings-level trim; Design analyzes the finite-difference linearization about that trim.',
+    config: mcConfig({ stepSize: 0.01, stopTime: 40, speed: 4, mcCampaignSize: 500, mcOverlayCount: 24 }),
+    design: designConfig({
+      opMode: 'x0',
+      xOp: String(plant.x0),
+      uOp: String(plant.u0),
+      Q: [2, 4, 2, 0.05, 20, 10, 8, 8, 1, 0.001, 0.0001, 0.0001],
+      R: 2,
+      controller: 'lqr',
+      analysis: ['poles', 'ctrb', 'damping', 'margins', 'polemap', 'bode', 'nyquist', 'nichols', 'rlocus'],
+    }),
+    nodes: [
+      node('note', 'note', 16, 8, {
+        text:
+          '6-DoF plant (H-1391): states [p q r V α β φ θ ψ h xN yE], inputs [δe δa δr δt]. Held at cruise trim; Stage shows N/E track. Design → Analyze uses FD linearization at x₀/u₀.',
+      }),
+      node('de', 'constant', 40, 120, { value: de0 }, 'δe trim'),
+      node('da', 'constant', 40, 200, { value: 0 }, 'δa'),
+      node('dr', 'constant', 40, 280, { value: 0 }, 'δr'),
+      node('dt', 'constant', 40, 360, { value: dt0 }, 'δt trim'),
+      node('debias', 'manual', 40, 440, { value: 0, min: -0.2, max: 0.2 }, 'δe bias'),
+      node('desum', 'sum', 220, 160, { signs: '++' }, 'Σ δe'),
+      node(
+        'plant',
+        'aircraft',
+        420,
+        200,
+        { ...plant },
+        'Aircraft 6-DoF',
+        'plant',
+        {
+          m: unc('percent', 8811, 5),
+          Cma: unc('percent', 8812, 12),
+          CLa: unc('percent', 8813, 8),
+        }
+      ),
+      node('stage', 'stage', 760, 200, { ...SCENE_AIRCRAFT }, 'Stage'),
+    ],
+    edges: [
+      edge('de', 'out', 'desum', 'in0'),
+      edge('debias', 'out', 'desum', 'in1'),
+      edge('desum', 'out', 'plant', 'u1'),
+      edge('da', 'out', 'plant', 'u2'),
+      edge('dr', 'out', 'plant', 'u3'),
+      edge('dt', 'out', 'plant', 'u4'),
+      edge('plant', 'y10', 'stage', 'xN'),
+      edge('plant', 'y11', 'stage', 'yE'),
+      edge('plant', 'y9', 'stage', 'h'),
+      edge('plant', 'y8', 'stage', 'psi'),
+      edge('plant', 'y3', 'stage', 'V'),
+      edge('plant', 'y4', 'stage', 'alpha'),
+    ],
+  };
+}
+
 /** Planar quadrotor chase: outer Pro-Nav → mid attitude → inner rate (+ altitude hold). */
 export function quadrotorDocument(): SimDocument {
   const numeric = { m: 1.2, Iyy: 0.03, g: 9.81, bw: 0.04 } as const;
@@ -740,6 +808,12 @@ export const EXAMPLES: ExampleTemplate[] = [
     name: 'Quadrotor Pro-Nav chase',
     summary: '3-loop planar quadrotor: Pro-Nav guidance → attitude → rate (+ altitude).',
     create: quadrotorDocument,
+  },
+  {
+    id: 'aircraft',
+    name: 'Aircraft 6-DoF',
+    summary: 'NASA H-1391 rigid 6-DoF plant; Design FD-linearizes about wings-level trim.',
+    create: aircraftDocument,
   },
 ];
 

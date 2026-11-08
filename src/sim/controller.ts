@@ -58,7 +58,7 @@ let rateWall = 0;
 let signature = '';
 let installed = false;
 
-const DESIGNABLE = new Set(['ode', 'statespace', 'secondorder', 'mass', 'inertia', 'dcmotor', 'rlc']);
+const DESIGNABLE = new Set(['ode', 'statespace', 'secondorder', 'mass', 'inertia', 'dcmotor', 'rlc', 'aircraft']);
 
 function graphNow() {
   return toGraph(useStore.getState().elements);
@@ -317,7 +317,7 @@ function plantInputDim(plant: GraphNode): number {
 
 function defaultPlantX0(plant: GraphNode, n: number): number[] {
   const p = plant.parameters;
-  if (plant.blockType === 'ode' || plant.blockType === 'statespace') {
+  if (plant.blockType === 'ode' || plant.blockType === 'statespace' || plant.blockType === 'aircraft') {
     return parseVector(String(p.x0 ?? ''), n, 0);
   }
   if (plant.blockType === 'secondorder') return [Number(p.y0) || 0, Number(p.dy0) || 0].slice(0, n);

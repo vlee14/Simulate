@@ -1,7 +1,14 @@
 import { stringifyBlueprint, SubsystemBlueprint } from '../engine/subsystem';
 import { Param, ParamUncertainty } from '../engine/types';
-import { CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
-import { SCENE_CART_PENDULUM, SCENE_MASS_SPRING, SCENE_QUAD, SCENE_ROTOR, SCENE_TANK } from './scenes';
+import { aircraftPlantParameters, CART_DOUBLE_PENDULUM_ODE, QUADROTOR_ODE } from './plants';
+import {
+  SCENE_AIRCRAFT,
+  SCENE_CART_PENDULUM,
+  SCENE_MASS_SPRING,
+  SCENE_QUAD,
+  SCENE_ROTOR,
+  SCENE_TANK,
+} from './scenes';
 
 const QUAD_NUMERIC = { m: 1.2, Iyy: 0.03, g: 9.81, bw: 0.04 } as const;
 
@@ -292,6 +299,58 @@ export const PLANT_RECIPES: PlantRecipe[] = [
         e('tsum', 'out', 'stage', 'thrust'),
       ],
     }),
+  },
+  {
+    id: 'aircraft',
+    name: 'Aircraft 6-DoF',
+    summary: 'NASA H-1391 rigid 6-DoF (pqr, Vαβ, Euler, NED) with linear aero; Design FD-linearizes about trim.',
+    domain: 'mechanical',
+    create: (origin) => {
+      const plant = aircraftPlantParameters({ V: 60, h: 1000 });
+      const u0 = String(plant.u0)
+        .trim()
+        .split(/[\s,;]+/)
+        .map(Number);
+      return {
+        nodes: [
+          n('de', 'constant', origin, 0, 40, { value: u0[0] ?? 0 }, 'δe trim'),
+          n('da', 'constant', origin, 0, 120, { value: 0 }, 'δa'),
+          n('dr', 'constant', origin, 0, 200, { value: 0 }, 'δr'),
+          n('dt', 'constant', origin, 0, 280, { value: u0[3] ?? 0.4 }, 'δt trim'),
+          n('debias', 'manual', origin, 0, 360, { value: 0, min: -0.2, max: 0.2 }, 'δe bias'),
+          n('desum', 'sum', origin, 180, 80, { signs: '++' }, 'Σ δe'),
+          n(
+            'plant',
+            'aircraft',
+            origin,
+            380,
+            140,
+            { ...plant },
+            'Aircraft 6-DoF',
+            {
+              m: unc('percent', 8801, 5),
+              Cma: unc('percent', 8802, 10),
+              CLa: unc('percent', 8803, 8),
+            }
+          ),
+          n('stage', 'stage', origin, 700, 140, { ...SCENE_AIRCRAFT }, 'Stage'),
+        ],
+        edges: [
+          e('de', 'out', 'desum', 'in0'),
+          e('debias', 'out', 'desum', 'in1'),
+          e('desum', 'out', 'plant', 'u1'),
+          e('da', 'out', 'plant', 'u2'),
+          e('dr', 'out', 'plant', 'u3'),
+          e('dt', 'out', 'plant', 'u4'),
+          e('plant', 'y10', 'stage', 'xN'),
+          e('plant', 'y11', 'stage', 'yE'),
+          e('plant', 'y9', 'stage', 'h'),
+          e('plant', 'y8', 'stage', 'psi'),
+          e('plant', 'y3', 'stage', 'V'),
+          e('plant', 'y4', 'stage', 'alpha'),
+        ],
+      };
+    },
   },
 ];
 
