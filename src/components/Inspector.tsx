@@ -950,11 +950,11 @@ function DesignPane() {
       )}
 
       <div className="design-sticky-actions">
-        <button className="ghost" onClick={runAnalyze}>
-          Analyze
+        <button type="button" className="ghost" onClick={runAnalyze}>
+          <BtnIcon icon="inspect">Analyze</BtnIcon>
         </button>
-        <button className="primary" onClick={runSynthesize}>
-          Synthesize
+        <button type="button" className="primary" onClick={runSynthesize}>
+          <BtnIcon icon="play">Synthesize</BtnIcon>
         </button>
       </div>
     </div>
