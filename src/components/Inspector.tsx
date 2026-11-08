@@ -1,14 +1,30 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getBlock } from '../engine/blocks';
 import { stepResponseMetrics } from '../engine/metrics';
+import { CONTROLLER_OPTIONS, controllerOption } from '../engine/controllers';
 import { ALL_ANALYSIS_OPTIONS } from '../engine/stability';
 import { countUncertainParams, describeDraw, DIST_OPTIONS, drawNumeric, recommendMcRuns } from '../engine/montecarlo';
-import { AnalysisOption, DistKind, LinearizationPoint, Param, ParamSpec, ParamUncertainty } from '../engine/types';
+import {
+  AnalysisOption,
+  ControllerKind,
+  DistKind,
+  LinearizationPoint,
+  Param,
+  ParamSpec,
+  ParamUncertainty,
+} from '../engine/types';
 import { telemetry } from '../engine/telemetry';
 import { isEdge, NodeData, toGraph } from '../model/elements';
 import { formatEta } from '../engine/mcCampaignRunner';
 import { MC_CAMPAIGN_MAX, MC_OVERLAY_MAX } from '../engine/mcStats';
-import { analyzeController, captureLinearizationPoint, computeLqr, resetSim, runSelectedMc, selectMcRun } from '../sim/controller';
+import {
+  analyzeController,
+  captureLinearizationPoint,
+  resetSim,
+  runSelectedMc,
+  selectMcRun,
+  synthesizeController,
+} from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
 import { LabPane } from './LabPane';
@@ -506,6 +522,7 @@ function DesignPane() {
   const setDesignOpMode = useStore((state) => state.setDesignOpMode);
   const setDesignOp = useStore((state) => state.setDesignOp);
   const setDesignAnalysis = useStore((state) => state.setDesignAnalysis);
+  const setDesignController = useStore((state) => state.setDesignController);
   const report = view?.report;
   const nominalReport = view?.nominalReport ?? report ?? null;
   const ensemble = view?.mcEnsemble ?? [];
@@ -523,12 +540,21 @@ function DesignPane() {
     if (view?.report) setSection('results');
   }, [view?.report]);
 
+  const controller = design.controller ?? 'lqr';
+  const controllerMeta = controllerOption(controller);
+  const needsQ = ['lqr', 'lqi', 'lqg', 'observer-lqr'].includes(controller);
+  const needsPoles = controller === 'poleplace';
+  const needsPid = ['pid-imc', 'pid-zn', 'pi-imc', 'pd', 'p'].includes(controller);
+  const needsLead = ['lead', 'lag', 'leadlag', 'hinf-loop'].includes(controller);
+  const needsQi = controller === 'lqi';
+  const needsTs = controller === 'deadbeat';
+
   const runAnalyze = () => {
     analyzeController();
     setSection('results');
   };
-  const runLqr = () => {
-    computeLqr();
+  const runSynthesize = () => {
+    synthesizeController(controller);
     setSection('results');
   };
 
@@ -537,7 +563,7 @@ function DesignPane() {
       <header className="pane-hero">
         <p className="eyebrow">Control design</p>
         <h2>Analyze & tune</h2>
-        <p className="lede">Linearize at a breakpoint, inspect margins and plots, then apply LQR gains.</p>
+        <p className="lede">Pick a controller, linearize, synthesize gains, then inspect margins and plots.</p>
       </header>
 
       <div className="segmented" role="tablist" aria-label="Design sections">
@@ -614,17 +640,101 @@ function DesignPane() {
           </section>
 
           <section className="analysis-card">
-            <h3>LQR weights</h3>
-            {Q_LABELS.map((label, index) => (
+            <h3>Controller</h3>
+            <label className="field">
+              <span>Type</span>
+              <select
+                value={controller}
+                onChange={(event) => setDesignController({ controller: event.target.value as ControllerKind })}
+              >
+                {Array.from(new Set(CONTROLLER_OPTIONS.map((o) => o.group))).map((group) => (
+                  <optgroup key={group} label={group}>
+                    {CONTROLLER_OPTIONS.filter((o) => o.group === group).map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <em>
+                {controllerMeta.help} · writes to {controllerMeta.target}
+              </em>
+            </label>
+
+            {needsPoles ? (
+              <label className="field">
+                <span>Desired poles</span>
+                <input
+                  value={design.poles ?? ''}
+                  placeholder="-2 -3 or -1±2j"
+                  onChange={(event) => setDesignController({ poles: event.target.value })}
+                />
+                <em>Ackermann placement onto k0… / kref</em>
+              </label>
+            ) : null}
+
+            {needsPid ? (
               <NumberField
-                key={label}
-                label={label}
-                value={design.Q[index] ?? 0}
-                step={1}
-                onCommit={(value) => setDesignWeight(index, Math.max(0, value))}
+                label="IMC λ (s, 0 = auto)"
+                value={design.pidLambda ?? 0}
+                step={0.05}
+                onCommit={(value) => setDesignController({ pidLambda: Math.max(0, value) })}
               />
-            ))}
-            <NumberField label="R (control)" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
+            ) : null}
+
+            {needsQi ? (
+              <NumberField
+                label="Integral weight Qi"
+                value={design.Qi ?? 20}
+                step={1}
+                onCommit={(value) => setDesignController({ Qi: Math.max(1e-6, value) })}
+              />
+            ) : null}
+
+            {needsLead ? (
+              <>
+                <NumberField
+                  label="ωc (rad/s)"
+                  value={design.omegaC ?? 3}
+                  step={0.5}
+                  onCommit={(value) => setDesignController({ omegaC: Math.max(1e-3, value) })}
+                />
+                {controller !== 'lag' ? (
+                  <NumberField
+                    label="Phase boost (°)"
+                    value={design.phaseBoostDeg ?? 45}
+                    step={5}
+                    onCommit={(value) => setDesignController({ phaseBoostDeg: Math.min(70, Math.max(5, value)) })}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            {needsTs ? (
+              <NumberField
+                label="Sample time Ts (s)"
+                value={design.sampleTime ?? 0.02}
+                step={0.01}
+                onCommit={(value) => setDesignController({ sampleTime: Math.max(1e-4, value) })}
+              />
+            ) : null}
+
+            {needsQ ? (
+              <>
+                <h3>Weights Q / R</h3>
+                {Q_LABELS.map((label, index) => (
+                  <NumberField
+                    key={label}
+                    label={label}
+                    value={design.Q[index] ?? 0}
+                    step={1}
+                    onCommit={(value) => setDesignWeight(index, Math.max(0, value))}
+                  />
+                ))}
+                <NumberField label="R (control)" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
+              </>
+            ) : null}
           </section>
 
           <section className="analysis-card">
@@ -860,15 +970,15 @@ function DesignPane() {
           </section>
         </div>
       ) : (
-        <p className="hint empty-results">Select a plant, set the breakpoint, then Analyze or Compute LQR.</p>
+        <p className="hint empty-results">Select a plant, set the breakpoint, then Analyze or Synthesize.</p>
       )}
 
       <div className="design-sticky-actions">
         <button className="ghost" onClick={runAnalyze}>
           Analyze
         </button>
-        <button className="primary" onClick={runLqr}>
-          Compute LQR
+        <button className="primary" onClick={runSynthesize}>
+          Synthesize
         </button>
       </div>
     </div>

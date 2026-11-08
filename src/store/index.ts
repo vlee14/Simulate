@@ -68,6 +68,7 @@ interface AppState {
   setDesignOpMode: (mode: LinearizationPoint) => void;
   setDesignOp: (patch: { xOp?: string; uOp?: string }) => void;
   setDesignAnalysis: (option: AnalysisOption, enabled: boolean) => void;
+  setDesignController: (patch: Partial<DesignConfig>) => void;
   setDesignView: (view: DesignView | null) => void;
   setSelected: (ids: string[]) => void;
   setStatus: (status: AppState['status'], message?: string, errorIds?: string[]) => void;
@@ -136,11 +137,8 @@ export const useStore = create<AppState>((set, get) => ({
   description: '',
   config: { ...DEFAULT_CONFIG },
   design: {
+    ...DEFAULT_DESIGN,
     Q: DEFAULT_DESIGN.Q.slice(),
-    R: DEFAULT_DESIGN.R,
-    opMode: DEFAULT_DESIGN.opMode,
-    xOp: DEFAULT_DESIGN.xOp,
-    uOp: DEFAULT_DESIGN.uOp,
     analysis: DEFAULT_DESIGN.analysis.slice(),
   },
   designView: null,
@@ -167,11 +165,9 @@ export const useStore = create<AppState>((set, get) => ({
       description: model.description,
       config: { ...DEFAULT_CONFIG, ...model.config },
       design: {
+        ...DEFAULT_DESIGN,
+        ...(model.design ?? {}),
         Q: (model.design?.Q ?? DEFAULT_DESIGN.Q).slice(),
-        R: model.design?.R ?? DEFAULT_DESIGN.R,
-        opMode: model.design?.opMode ?? DEFAULT_DESIGN.opMode,
-        xOp: model.design?.xOp ?? DEFAULT_DESIGN.xOp,
-        uOp: model.design?.uOp ?? DEFAULT_DESIGN.uOp,
         analysis: (model.design?.analysis ?? DEFAULT_DESIGN.analysis).slice(),
       },
       designView: null,
@@ -248,6 +244,8 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
   setDesignR: (value) => set((state) => ({ design: { ...state.design, R: value }, dirty: true })),
+
+  setDesignController: (patch) => set((state) => ({ design: { ...state.design, ...patch }, dirty: true })),
 
   setDesignOpMode: (opMode) => set((state) => ({ design: { ...state.design, opMode }, dirty: true })),
 

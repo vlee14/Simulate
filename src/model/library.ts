@@ -64,6 +64,13 @@ export function parseDocument(raw: unknown): SimDocument {
       analysis: Array.isArray(doc.design?.analysis) && doc.design.analysis.length
         ? doc.design.analysis
         : DEFAULT_DESIGN.analysis.slice(),
+      controller: doc.design?.controller ?? DEFAULT_DESIGN.controller,
+      poles: typeof doc.design?.poles === 'string' ? doc.design.poles : DEFAULT_DESIGN.poles,
+      pidLambda: Number(doc.design?.pidLambda ?? DEFAULT_DESIGN.pidLambda),
+      Qi: Number(doc.design?.Qi ?? DEFAULT_DESIGN.Qi),
+      omegaC: Number(doc.design?.omegaC ?? DEFAULT_DESIGN.omegaC),
+      phaseBoostDeg: Number(doc.design?.phaseBoostDeg ?? DEFAULT_DESIGN.phaseBoostDeg),
+      sampleTime: Number(doc.design?.sampleTime ?? DEFAULT_DESIGN.sampleTime),
     },
     nodes: doc.nodes,
     edges: doc.edges,

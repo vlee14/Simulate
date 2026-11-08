@@ -55,12 +55,9 @@ function mcConfig(patch: Partial<SimDocument['config']> = {}): SimDocument['conf
 function designConfig(patch: Partial<SimDocument['design']> = {}): SimDocument['design'] {
   return {
     ...DEFAULT_DESIGN,
+    ...patch,
     Q: (patch.Q ?? DEFAULT_DESIGN.Q).slice(),
     analysis: (patch.analysis ?? DEFAULT_DESIGN.analysis).slice(),
-    opMode: patch.opMode ?? 'equilibrium',
-    xOp: patch.xOp ?? '',
-    uOp: patch.uOp ?? '0',
-    R: patch.R ?? DEFAULT_DESIGN.R,
   };
 }
 

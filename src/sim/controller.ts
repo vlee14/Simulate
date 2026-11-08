@@ -6,7 +6,24 @@ import { linearizeBlock } from '../engine/linearize';
 import { runMcCampaign, sampleToFreqPoints } from '../engine/mcCampaignRunner';
 import { applyMonteCarlo, countUncertainParams, recommendMcRuns } from '../engine/montecarlo';
 import { runSensitivity } from '../engine/sensitivity';
-import { parsePoleList, placePolesSiso, tunePidImc, tunePidZn } from '../engine/synthesis';
+import { controllerOption } from '../engine/controllers';
+import {
+  designDeadbeat,
+  designHinfLoopShape,
+  designLag,
+  designLead,
+  designLeadLag,
+  designLqi,
+  designObserverLqr,
+  parsePoleList,
+  placePolesSiso,
+  PidGains,
+  tuneP,
+  tunePd,
+  tunePiImc,
+  tunePidImc,
+  tunePidZn,
+} from '../engine/synthesis';
 import {
   clampCampaignSize,
   freqFlatToPoints,
@@ -700,11 +717,11 @@ export function analyzeController(): void {
  * Optional role `kref` receives +K₀ for reference feedforward on the first state.
  * Linearizes about the Design-pane operating point.
  */
-function writeStateFeedbackGains(K: number[]): { id: string; value: number }[] {
+function writeStateFeedbackGains(K: number[], checkpoint = true): { id: string; value: number }[] {
   const graph = graphNow();
   const appliedGains: { id: string; value: number }[] = [];
   const store = useStore.getState();
-  store.checkpoint();
+  if (checkpoint) store.checkpoint();
   K.forEach((value, index) => {
     const role = `k${index}`;
     const node = graph.nodes.find((item) => item.id === role || item.role === role);
@@ -721,38 +738,212 @@ function writeStateFeedbackGains(K: number[]): { id: string; value: number }[] {
   return appliedGains;
 }
 
+function writePidGains(gains: PidGains, checkpoint = true): string | null {
+  const graph = graphNow();
+  const selected = useStore.getState().selectedIds[0];
+  const pid =
+    graph.nodes.find((n) => n.id === selected && n.blockType === 'pid') ??
+    graph.nodes.find((n) => n.blockType === 'pid');
+  if (!pid) return null;
+  const store = useStore.getState();
+  if (checkpoint) store.checkpoint();
+  store.updateParam(pid.id, 'Kp', gains.Kp);
+  store.updateParam(pid.id, 'Ki', gains.Ki);
+  store.updateParam(pid.id, 'Kd', gains.Kd);
+  store.updateParam(pid.id, 'Tf', gains.Tf);
+  return pid.id;
+}
+
+function writeTransfer(num: string, den: string, checkpoint = true): string | null {
+  const graph = graphNow();
+  const selected = useStore.getState().selectedIds[0];
+  const tf =
+    graph.nodes.find((n) => n.id === selected && n.blockType === 'transfer') ??
+    graph.nodes.find((n) => n.blockType === 'transfer');
+  if (!tf) return null;
+  const store = useStore.getState();
+  if (checkpoint) store.checkpoint();
+  store.updateParam(tf.id, 'numerator', num);
+  store.updateParam(tf.id, 'denominator', den);
+  return tf.id;
+}
+
+function writeObserverL(L: number[], checkpoint = true): string | null {
+  const graph = graphNow();
+  const selected = useStore.getState().selectedIds[0];
+  const obs =
+    graph.nodes.find((n) => n.id === selected && n.blockType === 'observer') ??
+    graph.nodes.find((n) => n.blockType === 'observer');
+  if (!obs) return null;
+  const store = useStore.getState();
+  if (checkpoint) store.checkpoint();
+  store.updateParam(obs.id, 'L', L.map((v) => (Number.isFinite(v) ? Number(v.toPrecision(6)) : 0)).join('; '));
+  return obs.id;
+}
+
+function writeIntegralGain(Ki: number): void {
+  const graph = graphNow();
+  const store = useStore.getState();
+  const kiGain = graph.nodes.find((n) => (n.id === 'ki' || n.role === 'ki') && n.blockType === 'gain');
+  if (kiGain) {
+    store.updateParam(kiGain.id, 'k', Ki);
+    return;
+  }
+  const pid = graph.nodes.find((n) => n.blockType === 'pid');
+  if (pid) store.updateParam(pid.id, 'Ki', Ki);
+}
+
 export function computeLqr(): void {
+  synthesizeController('lqr');
+}
+
+/**
+ * Synthesize the selected Design-pane controller and write parameters onto
+ * matching blocks (k0…/kref, PID, Transfer Fcn, Observer).
+ */
+export function synthesizeController(kind = useStore.getState().design.controller): void {
   const state = useStore.getState();
   const plant = findDesignPlant();
+  const meta = controllerOption(kind);
   if (!plant) {
     state.setStatus(state.status, 'Select a Dynamics plant (ODE, State-Space, …) to design a controller.');
     return;
   }
   try {
-    const op = resolveOperatingPoint(plant, state.design);
-    const result = designDynamicsLqr(plant.blockType, plant.parameters, state.design.Q, state.design.R, op.x, op.u);
-    const appliedGains = writeStateFeedbackGains(result.K);
-    const applied = appliedGains.length;
+    const design = state.design;
+    const op = resolveOperatingPoint(plant, design);
     const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
     const B1 = B.map((row) => [row[0] ?? 0]);
+    let summary = '';
+    let K: number[] = [];
+    let appliedGains: { id: string; value: number }[] = [];
+
+    const pidLambda = design.pidLambda > 0 ? design.pidLambda : undefined;
+
+    switch (kind) {
+      case 'lqr': {
+        const result = designDynamicsLqr(plant.blockType, plant.parameters, design.Q, design.R, op.x, op.u);
+        K = result.K;
+        appliedGains = writeStateFeedbackGains(result.K);
+        summary =
+          appliedGains.length > 0
+            ? `LQR about ${op.label} — wrote ${appliedGains.length} gain${appliedGains.length === 1 ? '' : 's'} (k0… / kref).`
+            : `LQR about ${op.label}. Add gain blocks with roles k0, k1, … (and optional kref).`;
+        break;
+      }
+      case 'lqi': {
+        const result = designLqi(A, B1, design.Q, design.R, design.Qi ?? 20);
+        K = result.Kx;
+        appliedGains = writeStateFeedbackGains(result.Kx);
+        writeIntegralGain(result.Ki);
+        summary = `${result.note} About ${op.label}.`;
+        break;
+      }
+      case 'lqg': {
+        const result = designDynamicsLqr(plant.blockType, plant.parameters, design.Q, design.R, op.x, op.u);
+        K = result.K;
+        appliedGains = writeStateFeedbackGains(result.K);
+        const obs = designObserverLqr(A, design.Q, design.R);
+        const obsId = writeObserverL(obs.L, false);
+        summary = obsId
+          ? `LQG about ${op.label}: wrote ${appliedGains.length} feedback gains + observer L on “${obsId}”.`
+          : `LQG feedback written (${appliedGains.length} gains). Add an Observer block for L.`;
+        break;
+      }
+      case 'poleplace': {
+        const poles = parsePoleList(design.poles || '-2 -3');
+        const result = placePolesSiso(A, B1, poles);
+        K = result.K;
+        appliedGains = writeStateFeedbackGains(result.K);
+        summary = `${result.note} Applied ${appliedGains.length} gain${appliedGains.length === 1 ? '' : 's'}.`;
+        break;
+      }
+      case 'deadbeat': {
+        const result = designDeadbeat(A, B1, design.sampleTime || 0.02);
+        K = result.K;
+        appliedGains = writeStateFeedbackGains(result.K);
+        summary = `${result.note} Applied ${appliedGains.length} gains.`;
+        break;
+      }
+      case 'pid-imc':
+      case 'pid-zn':
+      case 'pi-imc':
+      case 'pd':
+      case 'p': {
+        const gains =
+          kind === 'pid-zn'
+            ? tunePidZn(plant.blockType, plant.parameters, { x0: op.x, u0: op.u })
+            : kind === 'pi-imc'
+              ? tunePiImc(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, lambda: pidLambda ?? design.pidLambda })
+              : kind === 'pd'
+                ? tunePd(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, lambda: pidLambda ?? design.pidLambda })
+                : kind === 'p'
+                  ? tuneP(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, lambda: pidLambda ?? design.pidLambda })
+                  : tunePidImc(plant.blockType, plant.parameters, {
+                      x0: op.x,
+                      u0: op.u,
+                      lambda: pidLambda ?? design.pidLambda,
+                    });
+        const id = writePidGains(gains);
+        if (!id) throw new Error('Add a PID block to receive tuned gains.');
+        summary = `${gains.note} Wrote onto PID “${id}”.`;
+        K = readControllerGains(plantStateDim(plant));
+        appliedGains = [
+          { id: `${id}.Kp`, value: gains.Kp },
+          { id: `${id}.Ki`, value: gains.Ki },
+          { id: `${id}.Kd`, value: gains.Kd },
+        ];
+        break;
+      }
+      case 'lead':
+      case 'lag':
+      case 'leadlag':
+      case 'hinf-loop': {
+        const tf =
+          kind === 'lag'
+            ? designLag({ omegaC: design.omegaC || 1 })
+            : kind === 'leadlag'
+              ? designLeadLag({ omegaC: design.omegaC || 3, phaseBoostDeg: design.phaseBoostDeg || 45 })
+              : kind === 'hinf-loop'
+                ? designHinfLoopShape({ omegaC: design.omegaC || 3, phaseBoostDeg: design.phaseBoostDeg || 50 })
+                : designLead({ omegaC: design.omegaC || 3, phaseBoostDeg: design.phaseBoostDeg || 45 });
+        const id = writeTransfer(tf.numerator, tf.denominator);
+        if (!id) throw new Error('Add a Transfer Fcn block to receive the compensator.');
+        summary = `${tf.note} Wrote onto Transfer “${id}”.`;
+        K = readControllerGains(plantStateDim(plant));
+        appliedGains = [
+          { id: `${id}.num`, value: 0 },
+          { id: `${id}.den`, value: 0 },
+        ];
+        break;
+      }
+      case 'observer-lqr': {
+        const obs = designObserverLqr(A, design.Q, design.R);
+        const id = writeObserverL(obs.L);
+        if (!id) throw new Error('Add an Observer block to receive L.');
+        summary = `${obs.note} Target “${id}”.`;
+        K = readControllerGains(plantStateDim(plant));
+        appliedGains = obs.L.map((v, i) => ({ id: `L${i}`, value: v }));
+        break;
+      }
+      default:
+        throw new Error(`Unknown controller kind: ${kind}`);
+    }
+
     publishDesignView({
-      summary:
-        applied > 0
-          ? `LQR about ${op.label} on “${plant.blockType}” — wrote ${applied} gain${applied === 1 ? '' : 's'} (k0… / kref).`
-          : `LQR about ${op.label} on “${plant.blockType}”. Add gain blocks with roles k0, k1, … (and optional kref).`,
+      summary: summary || `${meta.label} about ${op.label}.`,
       plant,
-      K: result.K,
+      K,
       appliedGains,
       opLabel: op.label,
       A,
       B: B1,
     });
-    const stable = result.polesClosed.every((pole) => pole.real < 0);
     const status = useStore.getState().status;
     const next = status === 'running' || status === 'paused' ? status : 'idle';
-    useStore.getState().setStatus(next, stable ? 'LQR gains applied' : 'Closed loop is not stable', []);
+    useStore.getState().setStatus(next, `${meta.label} applied`, []);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'LQR failed';
+    const message = error instanceof Error ? error.message : 'Controller synthesis failed';
     useStore.getState().setDesignView(null);
     useStore.getState().setStatus(useStore.getState().status, message);
   }

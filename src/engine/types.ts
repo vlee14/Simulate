@@ -141,6 +141,24 @@ export type AnalysisOption =
   | 'nichols'
   | 'rlocus';
 
+/** Controller synthesis method shown in Design → Controller. */
+export type ControllerKind =
+  | 'lqr'
+  | 'lqi'
+  | 'lqg'
+  | 'poleplace'
+  | 'pid-imc'
+  | 'pid-zn'
+  | 'pi-imc'
+  | 'pd'
+  | 'p'
+  | 'lead'
+  | 'lag'
+  | 'leadlag'
+  | 'observer-lqr'
+  | 'hinf-loop'
+  | 'deadbeat';
+
 export interface DesignConfig {
   Q: number[];
   R: number;
@@ -152,6 +170,20 @@ export interface DesignConfig {
   uOp: string;
   /** Which stability reports to compute / show. */
   analysis: AnalysisOption[];
+  /** Active controller synthesis method. */
+  controller: ControllerKind;
+  /** Desired closed-loop poles for Ackermann / deadbeat (text). */
+  poles: string;
+  /** IMC closed-loop speed λ (fraction of plant τ when ≤1). */
+  pidLambda: number;
+  /** Integral state weight for LQI. */
+  Qi: number;
+  /** Desired gain-crossover / lead frequency (rad/s). */
+  omegaC: number;
+  /** Lead phase boost (degrees) for lead / H∞ loop-shaping. */
+  phaseBoostDeg: number;
+  /** Sample time for discrete deadbeat (s). */
+  sampleTime: number;
 }
 
 export const SIGNAL_COLORS = ['#e7a23a', '#5ec8ff', '#ff6b8a', '#7ddea0', '#d2a8ff', '#ffb085'];

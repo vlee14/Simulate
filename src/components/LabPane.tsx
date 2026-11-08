@@ -187,7 +187,8 @@ export function LabPane() {
         </>
       ) : null}
 
-      <h3>Synthesis</h3>
+      <h3>Synthesis shortcuts</h3>
+      <p className="hint">Full controller catalog (LQR, LQI, LQG, PID, lead/lag, H∞ shaping, deadbeat, …) lives on the Design tab.</p>
       <div className="design-actions stacked">
         <button type="button" className="ghost wide" onClick={() => tunePid('imc')}>
           Tune PID (IMC)

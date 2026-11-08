@@ -42,8 +42,50 @@ import {
 import { runSensitivity } from '../engine/sensitivity';
 import { analyzeStability, logspace, parseVector } from '../engine/stability';
 import { expandGraph, stringifyBlueprint } from '../engine/subsystem';
-import { parsePoleList, placePolesSiso, tunePidImc } from '../engine/synthesis';
+import { CONTROLLER_OPTIONS } from '../engine/controllers';
+import {
+  designDeadbeat,
+  designLead,
+  designLqi,
+  designObserverLqr,
+  parsePoleList,
+  placePolesSiso,
+  tunePidImc,
+} from '../engine/synthesis';
 import { close, runEngine } from './helpers';
+
+describe('controller synthesis', () => {
+  it('catalog covers optimal, classical, compensators, observers', () => {
+    expect(CONTROLLER_OPTIONS.length).toBeGreaterThanOrEqual(12);
+    expect(CONTROLLER_OPTIONS.some((o) => o.id === 'lqi')).toBe(true);
+    expect(CONTROLLER_OPTIONS.some((o) => o.id === 'hinf-loop')).toBe(true);
+    expect(CONTROLLER_OPTIONS.some((o) => o.id === 'leadlag')).toBe(true);
+  });
+
+  it('LQI, observer, lead, deadbeat produce finite gains', () => {
+    const A = [
+      [0, 1],
+      [-2, -0.8],
+    ];
+    const B = [[0], [1]];
+    const lqi = designLqi(A, B, [10, 1], 1, 25);
+    expect(lqi.Kx.length).toBe(2);
+    expect(Number.isFinite(lqi.Ki)).toBe(true);
+    expect(lqi.polesClosed.every((p) => p.real < 0)).toBe(true);
+
+    const obs = designObserverLqr(A, [10, 1], 1);
+    expect(obs.L.length).toBe(2);
+    expect(obs.poles.every((p) => p.real < 0)).toBe(true);
+
+    const lead = designLead({ omegaC: 4, phaseBoostDeg: 40 });
+    expect(lead.numerator.split(/\s+/).length).toBe(2);
+    expect(lead.denominator.split(/\s+/).length).toBe(2);
+
+    const db = designDeadbeat(A, B, 0.05);
+    expect(db.K.length).toBe(2);
+    expect(db.K.every((k) => Number.isFinite(k))).toBe(true);
+  });
+});
 
 describe('core numerics', () => {
   it('eigenvalues and scalar LQR', () => {
