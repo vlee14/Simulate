@@ -111,7 +111,7 @@ export function PlotDetailViewer({
   );
   const margins = (selectedRun > 0 ? selected?.margins : null) ?? report.margins ?? base.margins;
   const conclusions = (selectedRun > 0 ? selected?.conclusions : null) ?? report.conclusions ?? base.conclusions;
-  const [size, setSize] = useState({ w: 720, h: 420 });
+  const [size, setSize] = useState({ w: 0, h: 420 });
   const [boundsMode, setBoundsMode] = useState<'auto' | 'manual'>('auto');
   const [autoBounds, setAutoBounds] = useState<ChartAxisBounds | null>(null);
   const [manualBounds, setManualBounds] = useState<ChartAxisBounds | null>(null);
@@ -134,9 +134,9 @@ export function PlotDetailViewer({
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const compact = vw <= 1040;
-      const w = Math.max(280, Math.min(vw - (compact ? 32 : 360), 960));
-      const h = Math.max(240, Math.min(vh * (compact ? 0.42 : 0.58), 560));
-      setSize({ w, h });
+      // Height only — width fills the detail canvas column so it cannot overflow the side panel.
+      const h = Math.max(220, Math.min(vh * (compact ? 0.38 : 0.56), compact ? 360 : 520));
+      setSize({ w: 0, h });
     };
     measure();
     window.addEventListener('resize', measure);
@@ -208,8 +208,8 @@ export function PlotDetailViewer({
             <EnsembleChart
               kind={kind}
               title={TITLES[kind]}
-              width={size.w}
               height={size.h}
+              fill
               compact={false}
               expandable={false}
               nominal={base}

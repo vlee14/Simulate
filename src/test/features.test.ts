@@ -80,16 +80,16 @@ import {
 import { close, runEngine } from './helpers';
 
 describe('plot axes', () => {
-  it('wraps Nichols phase into [−180°, 180°] and splits wrap jumps', () => {
-    expect(wrapNicholsPhase(10)).toBe(10);
+  it('wraps Nichols phase into (−360°, 0°] and splits wrap jumps', () => {
+    expect(wrapNicholsPhase(10)).toBe(-350);
     expect(wrapNicholsPhase(-180)).toBe(-180);
-    expect(wrapNicholsPhase(190)).toBe(-170);
+    expect(wrapNicholsPhase(0)).toBe(0);
     expect(wrapNicholsPhase(-400)).toBe(-40);
     expect(niceTicks(-2, 2, 5).length).toBeGreaterThanOrEqual(3);
     const segs = nicholsPhaseSeries([
-      { phaseDeg: 170, magDb: 0 },
-      { phaseDeg: 190, magDb: -1 },
-      { phaseDeg: -170, magDb: -2 },
+      { phaseDeg: -10, magDb: 0 },
+      { phaseDeg: 10, magDb: -1 },
+      { phaseDeg: -350, magDb: -2 },
     ]);
     expect(segs.length).toBeGreaterThanOrEqual(2);
   });
@@ -99,15 +99,15 @@ describe('plot axes', () => {
     expect(bode.min).toBeLessThanOrEqual(-3);
     expect(bode.max).toBeGreaterThanOrEqual(12);
     expect(bode.min).toBeLessThanOrEqual(0);
-    const nichols = niceBounds(-120, -40, {
+    const nichols = niceBounds(-270, -90, {
       padFrac: 0.08,
-      minSpan: 90,
-      anchors: [-180, 0, 180],
-      clamp: { min: -180, max: 180 },
+      minSpan: 180,
+      anchors: [-360, -180, 0],
+      clamp: { min: -360, max: 0 },
     });
-    expect(nichols.min).toBeGreaterThanOrEqual(-180);
-    expect(nichols.max).toBeLessThanOrEqual(180);
-    expect(nichols.max - nichols.min).toBeGreaterThanOrEqual(90);
+    expect(nichols.min).toBeGreaterThanOrEqual(-360);
+    expect(nichols.max).toBeLessThanOrEqual(0);
+    expect(nichols.max - nichols.min).toBeGreaterThanOrEqual(180);
     const lim = symmetricLimit([0.5, 0.8, 1.2, 1.1, 50], { floor: 2, ceil: 12, percentile: 0.9, include: [1] });
     expect(lim).toBeGreaterThanOrEqual(2);
     expect(lim).toBeLessThanOrEqual(12);
