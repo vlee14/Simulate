@@ -44,7 +44,22 @@ export interface MarginResult {
   phaseMarginDeg: number | null;
   gainCrossoverRad: number | null;
   phaseCrossoverRad: number | null;
+  /** Approximate delay margin = PM / ω_gc (seconds), when both exist. */
+  delayMarginSec: number | null;
   note: string;
+}
+
+export type StabilityVerdict = 'stable' | 'marginal' | 'unstable' | 'unknown';
+export type MarginVerdict = 'adequate' | 'thin' | 'inadequate' | 'unknown';
+
+export interface StabilityConclusions {
+  /** One-line headline for the Design pane. */
+  headline: string;
+  closedLoop: StabilityVerdict;
+  openLoop: StabilityVerdict;
+  margins: MarginVerdict;
+  /** Short actionable bullets (poles, margins, controllability, settling). */
+  bullets: string[];
 }
 
 export interface StabilityReport {
@@ -60,9 +75,99 @@ export interface StabilityReport {
   controllabilityRank: number;
   modes: PoleMode[];
   margins: MarginResult | null;
+  conclusions: StabilityConclusions;
   freq: FreqPoint[];
   rootLocus: RootLocusBranch[];
   summary: string[];
+}
+
+/** Classic rule-of-thumb thresholds for SISO loop margins. */
+const GM_ADEQUATE_DB = 6;
+const GM_THIN_DB = 3;
+const PM_ADEQUATE_DEG = 45;
+const PM_THIN_DEG = 30;
+
+function poleVerdict(poles: Eigenvalue[]): StabilityVerdict {
+  if (!poles.length) return 'unknown';
+  let marginal = false;
+  for (const p of poles) {
+    if (p.real > 1e-7) return 'unstable';
+    if (p.real > -1e-7) marginal = true;
+  }
+  return marginal ? 'marginal' : 'stable';
+}
+
+function marginVerdict(margins: MarginResult | null): MarginVerdict {
+  if (!margins) return 'unknown';
+  const gm = margins.gainMarginDb;
+  const pm = margins.phaseMarginDeg;
+  // A missing GM/PM usually means no crossover in-band (≈ infinite margin on that channel).
+  if (gm == null && pm == null) return 'unknown';
+  const gmEff = gm == null ? Infinity : gm;
+  const pmEff = pm == null ? Infinity : pm;
+  if (gmEff < GM_THIN_DB || pmEff < PM_THIN_DEG) return 'inadequate';
+  if (gmEff < GM_ADEQUATE_DB || pmEff < PM_ADEQUATE_DEG) return 'thin';
+  return 'adequate';
+}
+
+export function buildConclusions(args: {
+  polesOpen: Eigenvalue[];
+  polesClosed: Eigenvalue[];
+  controllable: boolean;
+  controllabilityRank: number;
+  n: number;
+  margins: MarginResult | null;
+  settlingEstimate: number | null;
+  spectralAbscissaClosed: number;
+}): StabilityConclusions {
+  const openLoop = poleVerdict(args.polesOpen);
+  const closedLoop = poleVerdict(args.polesClosed);
+  const margins = marginVerdict(args.margins);
+  const bullets: string[] = [];
+
+  if (closedLoop === 'stable') bullets.push('Closed-loop poles are in the open left half-plane.');
+  else if (closedLoop === 'marginal') bullets.push('Closed loop is marginally stable (pole(s) on the imaginary axis).');
+  else bullets.push('Closed loop is unstable — at least one right-half-plane pole.');
+
+  if (openLoop === 'stable') bullets.push('Open-loop plant is asymptotically stable.');
+  else if (openLoop === 'unstable') bullets.push('Open-loop plant is unstable; feedback must stabilize it.');
+  else if (openLoop === 'marginal') bullets.push('Open-loop plant is marginally stable.');
+
+  if (args.margins) {
+    const gm = args.margins.gainMarginDb;
+    const pm = args.margins.phaseMarginDeg;
+    const gmText = gm == null ? '—' : `${gm.toFixed(1)} dB`;
+    const pmText = pm == null ? '—' : `${pm.toFixed(1)}°`;
+    if (margins === 'adequate') {
+      bullets.push(`Loop margins look healthy (GM ${gmText}, PM ${pmText}).`);
+    } else if (margins === 'thin') {
+      bullets.push(`Loop margins are thin (GM ${gmText}, PM ${pmText}) — expect sensitivity to gain/delay.`);
+    } else if (margins === 'inadequate') {
+      bullets.push(`Loop margins are inadequate (GM ${gmText}, PM ${pmText}) — retune gains or add lead.`);
+    } else {
+      bullets.push(`Gain/phase margins unavailable in the swept band (GM ${gmText}, PM ${pmText}).`);
+    }
+    if (args.margins.delayMarginSec != null && Number.isFinite(args.margins.delayMarginSec)) {
+      bullets.push(`Delay margin ≈ ${args.margins.delayMarginSec.toFixed(3)} s at gain crossover.`);
+    }
+  }
+
+  if (!args.controllable) {
+    bullets.push(`Not fully controllable (rank ${args.controllabilityRank}/${args.n}).`);
+  }
+  if (args.settlingEstimate != null) {
+    bullets.push(`Rough 2%-settling estimate 4/|α| ≈ ${args.settlingEstimate.toFixed(2)} s (α=${args.spectralAbscissaClosed.toFixed(3)}).`);
+  }
+
+  let headline: string;
+  if (closedLoop === 'unstable') headline = 'Unstable closed loop';
+  else if (closedLoop === 'marginal') headline = 'Marginally stable closed loop';
+  else if (margins === 'inadequate') headline = 'Stable, but margins are inadequate';
+  else if (margins === 'thin') headline = 'Stable, with thin stability margins';
+  else if (margins === 'adequate') headline = 'Stable closed loop with adequate margins';
+  else headline = 'Stable closed loop';
+
+  return { headline, closedLoop, openLoop, margins, bullets };
 }
 
 function closedLoop(A: number[][], B: number[][], K: number[]): number[][] {
@@ -221,6 +326,7 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
       phaseMarginDeg: null,
       gainCrossoverRad: null,
       phaseCrossoverRad: null,
+      delayMarginSec: null,
       note: 'No feedback gain — margins undefined.',
     };
   }
@@ -253,15 +359,28 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
     prev = p;
   }
 
+  let delayMarginSec: number | null = null;
+  if (phaseMargin != null && gainCrossover != null && gainCrossover > 1e-12) {
+    delayMarginSec = ((phaseMargin * Math.PI) / 180) / gainCrossover;
+  }
+
+  let note: string;
+  if (gainCrossover == null && phaseCrossover == null) {
+    note = 'No crossover found in 10⁻³…10³ rad/s — widen bandwidth or check gains.';
+  } else {
+    const bits = ['Margins from L(jw)=K(jwI−A)⁻¹B'];
+    if (gainMarginDb != null) bits.push(`target GM ≥ ${GM_ADEQUATE_DB} dB`);
+    if (phaseMargin != null) bits.push(`target PM ≥ ${PM_ADEQUATE_DEG}°`);
+    note = `${bits.join(' · ')}.`;
+  }
+
   return {
     gainMarginDb,
     phaseMarginDeg: phaseMargin,
     gainCrossoverRad: gainCrossover,
     phaseCrossoverRad: phaseCrossover,
-    note:
-      gainCrossover == null && phaseCrossover == null
-        ? 'No crossover found in 10⁻³…10³ rad/s — widen bandwidth or check gains.'
-        : 'Margins from frequency sweep of return ratio L(jw)=K(jwI−A)⁻¹B.',
+    delayMarginSec,
+    note,
   };
 }
 
@@ -326,23 +445,28 @@ export function analyzeStability(
   const ctrbRank = want.has('ctrb') || want.has('poles') ? controllabilityRank(A, B) : 0;
   const controllable = ctrbRank >= A.length;
   const modes = want.has('damping') ? poleModes(polesClosed) : [];
-  const needFreq = want.has('margins') || want.has('bode') || want.has('nyquist') || want.has('nichols');
-  const freq = needFreq ? frequencyResponse(A, B, K) : [];
-  const margins = want.has('margins') ? loopMargins(A, B, K, freq) : null;
+  // Always gather L(jw) so conclusions can include GM/PM (plots still gated in the UI).
+  const freq = frequencyResponse(A, B, K);
+  const margins = loopMargins(A, B, K, freq);
   const locus = want.has('rlocus') ? rootLocus(A, B, K) : [];
   const sigma = -spectralAbscissaClosed;
   const settlingEstimate = closedStable && sigma > 1e-6 ? 4 / sigma : null;
 
-  const summary: string[] = [];
-  summary.push(openStable ? 'Open loop: asymptotically stable' : 'Open loop: unstable (or marginally stable)');
-  summary.push(closedStable ? 'Closed loop: asymptotically stable' : 'Closed loop: unstable (or marginally stable)');
+  const conclusions = buildConclusions({
+    polesOpen,
+    polesClosed,
+    controllable,
+    controllabilityRank: ctrbRank,
+    n: A.length,
+    margins,
+    settlingEstimate,
+    spectralAbscissaClosed,
+  });
+
+  const summary: string[] = [conclusions.headline, ...conclusions.bullets];
   summary.push(`Spectral abscissa α_cl = ${spectralAbscissaClosed.toFixed(4)} (need α < 0)`);
-  if (settlingEstimate != null) summary.push(`≈4/|α| settling ~ ${settlingEstimate.toFixed(2)} s`);
-  if (want.has('ctrb')) summary.push(controllable ? `Controllable (rank ${ctrbRank}/${A.length})` : `Not fully controllable (rank ${ctrbRank}/${A.length})`);
-  if (margins) {
-    const gm = margins.gainMarginDb == null ? '—' : `${margins.gainMarginDb.toFixed(1)} dB`;
-    const pm = margins.phaseMarginDeg == null ? '—' : `${margins.phaseMarginDeg.toFixed(1)}°`;
-    summary.push(`Margins: GM ${gm}, PM ${pm}`);
+  if (want.has('ctrb')) {
+    summary.push(controllable ? `Controllable (rank ${ctrbRank}/${A.length})` : `Not fully controllable (rank ${ctrbRank}/${A.length})`);
   }
   if (freq.length) summary.push(`Frequency response: ${freq.length} points`);
   if (locus.length) summary.push(`Root locus: ${locus.length} branches`);
@@ -360,6 +484,7 @@ export function analyzeStability(
     controllabilityRank: ctrbRank,
     modes,
     margins,
+    conclusions,
     freq,
     rootLocus: locus,
     summary,

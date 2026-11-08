@@ -102,7 +102,27 @@ describe('dynamics + LQR + stability', () => {
     expect(report.closedStable).toBe(true);
     expect(report.freq.length).toBeGreaterThan(20);
     expect(report.rootLocus.length).toBe(6);
+    expect(report.margins).toBeTruthy();
+    expect(report.conclusions.closedLoop).toBe('stable');
+    expect(report.conclusions.headline.length).toBeGreaterThan(0);
+    expect(report.conclusions.bullets.length).toBeGreaterThan(1);
+    expect(report.summary[0]).toBe(report.conclusions.headline);
     expect(parseVector('0 0.2 -0.1 0 0 0', 6)[1]).toBeCloseTo(0.2);
+  });
+
+  it('always attaches conclusions and margins, including delay margin when PM/ω_gc exist', () => {
+    // Stable 1st-order plant ẋ = −x + u with K = 2 → L(s)=2/(s+1), ω_gc=√3, PM=60°.
+    const A = [[-1]];
+    const B = [[1]];
+    const K = [2];
+    const report = analyzeStability(A, B, K, ['poles']);
+    expect(report.conclusions.closedLoop).toBe('stable');
+    expect(report.margins).not.toBeNull();
+    expect(report.margins!.phaseMarginDeg).toBeGreaterThan(45);
+    expect(report.margins!.gainCrossoverRad).toBeGreaterThan(1);
+    expect(report.margins!.delayMarginSec).toBeGreaterThan(0);
+    expect(report.conclusions.margins).toBe('adequate');
+    expect(report.conclusions.bullets.some((b) => /margin/i.test(b))).toBe(true);
   });
 });
 

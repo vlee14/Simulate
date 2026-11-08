@@ -698,14 +698,61 @@ function DesignPane() {
           <p>{view.summary}</p>
           {view.opLabel ? <p className="hint">Breakpoint: {view.opLabel}</p> : null}
 
-          {report ? (
-            <ul className="gain-list report-summary">
-              {report.summary.map((line) => (
-                <li key={line}>
-                  <span>{line}</span>
+          {report?.conclusions ? (
+            <section className="stability-conclusions">
+              <h3>Stability conclusions</h3>
+              <p className={`conclusion-headline verdict-${report.conclusions.closedLoop}`}>{report.conclusions.headline}</p>
+              <ul className="verdict-row" aria-label="Stability verdicts">
+                <li>
+                  <span>Closed loop</span>
+                  <strong className={`verdict-${report.conclusions.closedLoop}`}>{verdictLabel(report.conclusions.closedLoop)}</strong>
                 </li>
-              ))}
-            </ul>
+                <li>
+                  <span>Open loop</span>
+                  <strong className={`verdict-${report.conclusions.openLoop}`}>{verdictLabel(report.conclusions.openLoop)}</strong>
+                </li>
+                <li>
+                  <span>Margins</span>
+                  <strong className={`verdict-margin-${report.conclusions.margins}`}>{marginVerdictLabel(report.conclusions.margins)}</strong>
+                </li>
+              </ul>
+              <ul className="conclusion-bullets">
+                {report.conclusions.bullets.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {report?.margins ? (
+            <section className="stability-margins">
+              <h3>Stability margins</h3>
+              <ul className="gain-list">
+                <li>
+                  <span>Gain margin</span>
+                  <span>{report.margins.gainMarginDb == null ? '—' : `${report.margins.gainMarginDb.toFixed(1)} dB`}</span>
+                </li>
+                <li>
+                  <span>Phase margin</span>
+                  <span>{report.margins.phaseMarginDeg == null ? '—' : `${report.margins.phaseMarginDeg.toFixed(1)}°`}</span>
+                </li>
+                <li>
+                  <span>Delay margin</span>
+                  <span>
+                    {report.margins.delayMarginSec == null ? '—' : `${report.margins.delayMarginSec.toFixed(3)} s`}
+                  </span>
+                </li>
+                <li>
+                  <span>ω_gc</span>
+                  <span>{report.margins.gainCrossoverRad == null ? '—' : `${report.margins.gainCrossoverRad.toFixed(2)} rad/s`}</span>
+                </li>
+                <li>
+                  <span>ω_pc</span>
+                  <span>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)} rad/s`}</span>
+                </li>
+              </ul>
+              <p className="hint">{report.margins.note}</p>
+            </section>
           ) : null}
 
           {report ? (
@@ -754,31 +801,6 @@ function DesignPane() {
                   </li>
                 ))}
               </ul>
-            </>
-          ) : null}
-
-          {show('margins') && report?.margins ? (
-            <>
-              <h3>Loop margins</h3>
-              <ul className="gain-list">
-                <li>
-                  <span>Gain margin</span>
-                  <span>{report.margins.gainMarginDb == null ? '—' : `${report.margins.gainMarginDb.toFixed(1)} dB`}</span>
-                </li>
-                <li>
-                  <span>Phase margin</span>
-                  <span>{report.margins.phaseMarginDeg == null ? '—' : `${report.margins.phaseMarginDeg.toFixed(1)}°`}</span>
-                </li>
-                <li>
-                  <span>ω_gc</span>
-                  <span>{report.margins.gainCrossoverRad == null ? '—' : `${report.margins.gainCrossoverRad.toFixed(2)} rad/s`}</span>
-                </li>
-                <li>
-                  <span>ω_pc</span>
-                  <span>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)} rad/s`}</span>
-                </li>
-              </ul>
-              <p className="hint">{report.margins.note}</p>
             </>
           ) : null}
 
@@ -843,4 +865,18 @@ function formatInput(value: number): string {
   const abs = Math.abs(value);
   if (abs !== 0 && (abs < 0.001 || abs >= 10000)) return value.toExponential(4);
   return String(Number(value.toPrecision(8)));
+}
+
+function verdictLabel(v: 'stable' | 'marginal' | 'unstable' | 'unknown'): string {
+  if (v === 'stable') return 'Stable';
+  if (v === 'marginal') return 'Marginal';
+  if (v === 'unstable') return 'Unstable';
+  return 'Unknown';
+}
+
+function marginVerdictLabel(v: 'adequate' | 'thin' | 'inadequate' | 'unknown'): string {
+  if (v === 'adequate') return 'Adequate';
+  if (v === 'thin') return 'Thin';
+  if (v === 'inadequate') return 'Inadequate';
+  return 'Unknown';
 }
