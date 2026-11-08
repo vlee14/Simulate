@@ -437,9 +437,10 @@ function linearizePlantRun(
 ): { A: number[][]; B: number[][]; opLabel: string } {
   const drawn = plantNodeForRun(plant.id, run) ?? plant;
   const op = resolveOperatingPoint(drawn, design);
-  const { A, B } = linearizeBlock(drawn.blockType, drawn.parameters, op.x, op.u, 1e-6, op.t);
+  const { A, B, method } = linearizeBlock(drawn.blockType, drawn.parameters, op.x, op.u, 1e-6, op.t);
   const B1 = B.map((row) => [row[0] ?? 0]);
-  return { A, B: B1, opLabel: op.label };
+  const methodLabel = method === 'analytical' ? 'analytical' : method === 'supplied' ? 'supplied A,B' : 'FD';
+  return { A, B: B1, opLabel: `${op.label} · ${methodLabel}` };
 }
 
 function sampleToOverlayReport(sample: McRunSample, ws: number[], nominal: StabilityReport): StabilityReport {
@@ -757,15 +758,16 @@ export function analyzeController(): void {
   }
   try {
     const op = resolveOperatingPoint(plant, state.design);
-    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u, 1e-6, op.t);
+    const { A, B, method } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u, 1e-6, op.t);
     const B1 = B.map((row) => [row[0] ?? 0]);
     const K = readControllerGains(A.length, op.t, op.s);
+    const methodLabel = method === 'analytical' ? 'analytical' : method === 'supplied' ? 'supplied A,B' : 'FD';
     publishDesignView({
-      summary: `Stability at ${op.label}.`,
+      summary: `Stability at ${op.label} (${methodLabel}).`,
       plant,
       K,
       appliedGains: K.map((value, index) => ({ id: `k${index}`, value: -value })),
-      opLabel: op.label,
+      opLabel: `${op.label} · ${methodLabel}`,
       A,
       B: B1,
     });

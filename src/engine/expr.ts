@@ -1,9 +1,12 @@
-type Expr =
+export type Expr =
   | { kind: 'num'; v: number }
   | { kind: 'var'; name: string }
   | { kind: 'neg'; a: Expr }
   | { kind: 'bin'; op: string; a: Expr; b: Expr }
   | { kind: 'call'; name: string; args: Expr[] };
+
+const ZERO: Expr = { kind: 'num', v: 0 };
+const ONE: Expr = { kind: 'num', v: 1 };
 
 type Tok =
   | { k: 'num'; v: number }
@@ -232,6 +235,210 @@ function evalExpr(e: Expr, vars: Record<string, number>): number {
 export function compileExpression(source: string): (vars: Record<string, number>) => number {
   const ast = parse(tokenize(source));
   return (vars) => evalExpr(ast, vars);
+}
+
+/** Parse a math expression into an AST (for symbolic differentiation). */
+export function parseExpression(source: string): Expr {
+  return parse(tokenize(source));
+}
+
+export function evaluateExpression(ast: Expr, vars: Record<string, number>): number {
+  return evalExpr(ast, vars);
+}
+
+/** Symbolic ∂e/∂variable (elementary calculus; abs/min/max use a simple subgradient). */
+export function differentiate(e: Expr, variable: string): Expr {
+  switch (e.kind) {
+    case 'num':
+      return ZERO;
+    case 'var':
+      return e.name === variable ? ONE : ZERO;
+    case 'neg':
+      return { kind: 'neg', a: differentiate(e.a, variable) };
+    case 'bin': {
+      const da = differentiate(e.a, variable);
+      const db = differentiate(e.b, variable);
+      switch (e.op) {
+        case '+':
+          return { kind: 'bin', op: '+', a: da, b: db };
+        case '-':
+          return { kind: 'bin', op: '-', a: da, b: db };
+        case '*':
+          // a'b + ab'
+          return {
+            kind: 'bin',
+            op: '+',
+            a: { kind: 'bin', op: '*', a: da, b: e.b },
+            b: { kind: 'bin', op: '*', a: e.a, b: db },
+          };
+        case '/':
+          // (a'b − ab') / b²
+          return {
+            kind: 'bin',
+            op: '/',
+            a: {
+              kind: 'bin',
+              op: '-',
+              a: { kind: 'bin', op: '*', a: da, b: e.b },
+              b: { kind: 'bin', op: '*', a: e.a, b: db },
+            },
+            b: { kind: 'bin', op: '*', a: e.b, b: e.b },
+          };
+        case '^': {
+          // a^b → a^b (b a'/a + ln(a) b') when a>0; for constant b: b a^{b-1} a'
+          if (e.b.kind === 'num') {
+            const bm1: Expr = { kind: 'num', v: e.b.v - 1 };
+            return {
+              kind: 'bin',
+              op: '*',
+              a: {
+                kind: 'bin',
+                op: '*',
+                a: e.b,
+                b: { kind: 'bin', op: '^', a: e.a, b: bm1 },
+              },
+              b: da,
+            };
+          }
+          return {
+            kind: 'bin',
+            op: '*',
+            a: e,
+            b: {
+              kind: 'bin',
+              op: '+',
+              a: {
+                kind: 'bin',
+                op: '*',
+                a: db,
+                b: { kind: 'call', name: 'ln', args: [e.a] },
+              },
+              b: {
+                kind: 'bin',
+                op: '*',
+                a: e.b,
+                b: { kind: 'bin', op: '/', a: da, b: e.a },
+              },
+            },
+          };
+        }
+        default:
+          return ZERO;
+      }
+    }
+    case 'call': {
+      const u = e.args[0] ?? ZERO;
+      const du = differentiate(u, variable);
+      const chain = (dOuter: Expr): Expr => ({ kind: 'bin', op: '*', a: dOuter, b: du });
+      switch (e.name) {
+        case 'sin':
+          return chain({ kind: 'call', name: 'cos', args: [u] });
+        case 'cos':
+          return chain({ kind: 'neg', a: { kind: 'call', name: 'sin', args: [u] } });
+        case 'tan':
+          return chain({
+            kind: 'bin',
+            op: '/',
+            a: ONE,
+            b: {
+              kind: 'bin',
+              op: '*',
+              a: { kind: 'call', name: 'cos', args: [u] },
+              b: { kind: 'call', name: 'cos', args: [u] },
+            },
+          });
+        case 'exp':
+          return chain({ kind: 'call', name: 'exp', args: [u] });
+        case 'ln':
+        case 'log':
+          return chain({ kind: 'bin', op: '/', a: ONE, b: u });
+        case 'sqrt':
+          return chain({
+            kind: 'bin',
+            op: '/',
+            a: ONE,
+            b: { kind: 'bin', op: '*', a: { kind: 'num', v: 2 }, b: { kind: 'call', name: 'sqrt', args: [u] } },
+          });
+        case 'abs':
+          return chain({ kind: 'call', name: 'sign', args: [u] });
+        case 'sign':
+          return ZERO;
+        case 'asin':
+          return chain({
+            kind: 'bin',
+            op: '/',
+            a: ONE,
+            b: {
+              kind: 'call',
+              name: 'sqrt',
+              args: [{ kind: 'bin', op: '-', a: ONE, b: { kind: 'bin', op: '*', a: u, b: u } }],
+            },
+          });
+        case 'acos':
+          return chain({
+            kind: 'neg',
+            a: {
+              kind: 'bin',
+              op: '/',
+              a: ONE,
+              b: {
+                kind: 'call',
+                name: 'sqrt',
+                args: [{ kind: 'bin', op: '-', a: ONE, b: { kind: 'bin', op: '*', a: u, b: u } }],
+              },
+            },
+          });
+        case 'atan':
+          return chain({
+            kind: 'bin',
+            op: '/',
+            a: ONE,
+            b: { kind: 'bin', op: '+', a: ONE, b: { kind: 'bin', op: '*', a: u, b: u } },
+          });
+        case 'pow': {
+          const v = e.args[1] ?? ONE;
+          return differentiate({ kind: 'bin', op: '^', a: u, b: v }, variable);
+        }
+        case 'min':
+        case 'max':
+        case 'atan2':
+        case 'hypot':
+          // Non-smooth / multi-arg: fall back to zero local contribution (caller may FD).
+          return ZERO;
+        default:
+          return ZERO;
+      }
+    }
+  }
+}
+
+/**
+ * Analytical Jacobian of f(x,u) given semicolon-split expression sources.
+ * Aᵢⱼ = ∂fᵢ/∂xⱼ, Bᵢₖ = ∂fᵢ/∂uₖ evaluated at `vars`.
+ */
+export function jacobianFromExpressions(
+  fSources: string[],
+  stateNames: string[],
+  inputNames: string[],
+  vars: Record<string, number>
+): { A: number[][]; B: number[][] } {
+  const n = fSources.length;
+  const m = inputNames.length;
+  const A = Array.from({ length: n }, () => new Array(n).fill(0));
+  const B = Array.from({ length: n }, () => new Array(m).fill(0));
+  for (let i = 0; i < n; i++) {
+    const ast = parseExpression(fSources[i] ?? '0');
+    for (let j = 0; j < stateNames.length; j++) {
+      A[i]![j] = evalExpr(differentiate(ast, stateNames[j]!), vars);
+    }
+    for (let k = 0; k < m; k++) {
+      let b = evalExpr(differentiate(ast, inputNames[k]!), vars);
+      // Bare `u` aliases u1 in ODE / Fcn plants.
+      if (k === 0) b += evalExpr(differentiate(ast, 'u'), vars);
+      B[i]![k] = b;
+    }
+  }
+  return { A, B };
 }
 
 /** How many scalar inputs an expression addresses (u or u1…uN). */

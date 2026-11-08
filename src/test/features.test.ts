@@ -272,6 +272,78 @@ describe('aircraft 6-DoF (NASA H-1391)', () => {
   });
 });
 
+describe('analytical / supplied linearization', () => {
+  it('uses closed-form A,B for second-order and symbolic Jacobian for ODE', () => {
+    const so = linearizeBlock('secondorder', { wn: 2, zeta: 0.25, K: 1 });
+    expect(so.method).toBe('analytical');
+    expect(so.A[1]![0]).toBeCloseTo(-4, 10);
+    expect(so.A[1]![1]).toBeCloseTo(-1, 10);
+    expect(so.B[1]![0]).toBeCloseTo(1, 10);
+
+    const ode = linearizeBlock(
+      'ode',
+      {
+        form: 'explicit',
+        nx: 2,
+        nu: 1,
+        ny: 2,
+        constants: 'wn=2; zeta=0.25',
+        dx: 'x2; -wn^2*x1 - 2*zeta*wn*x2 + u1',
+        x0: '0 0',
+        linMode: 'analytical',
+      },
+      [0, 0],
+      [0]
+    );
+    expect(ode.method).toBe('analytical');
+    expect(ode.A[0]![1]).toBeCloseTo(1, 8);
+    expect(ode.A[1]![0]).toBeCloseTo(-4, 8);
+    expect(ode.A[1]![1]).toBeCloseTo(-1, 8);
+    expect(ode.B[1]![0]).toBeCloseTo(1, 8);
+
+    const fd = linearizeBlock(
+      'ode',
+      {
+        form: 'explicit',
+        nx: 2,
+        nu: 1,
+        ny: 2,
+        constants: 'wn=2; zeta=0.25',
+        dx: 'x2; -wn^2*x1 - 2*zeta*wn*x2 + u1',
+        x0: '0 0',
+        linMode: 'fd',
+      },
+      [0, 0],
+      [0]
+    );
+    expect(fd.method).toBe('fd');
+    expect(fd.A[1]![0]).toBeCloseTo(ode.A[1]![0]!, 5);
+
+    const supplied = linearizeBlock(
+      'ode',
+      {
+        form: 'explicit',
+        nx: 2,
+        nu: 1,
+        ny: 2,
+        dx: 'x2; -x1',
+        linMode: 'supplied',
+        linA: '0 1; -9 -0.4',
+        linB: '0; 3',
+      },
+      [0, 0],
+      [0]
+    );
+    expect(supplied.method).toBe('supplied');
+    expect(supplied.A[1]![0]).toBeCloseTo(-9, 10);
+    expect(supplied.B[1]![0]).toBeCloseTo(3, 10);
+
+    const ss = linearizeBlock('statespace', { A: '0 1; -2 -0.8', B: '0; 1', C: '1 0', D: '0' });
+    expect(ss.method).toBe('analytical');
+    expect(ss.A[1]![0]).toBeCloseTo(-2, 10);
+  });
+});
+
 describe('controller gain schedules', () => {
   it('resolves Gain k(t,s) and PID gainExprs; s is detected for ports', () => {
     expect(expressionUsesSchedule('k*(1+0.05*t)')).toBe(false);

@@ -63,6 +63,13 @@ export interface BlockContext {
   deriv: Float64Array;
 }
 
+export interface LinearizePoint {
+  parameters: Record<string, Param>;
+  x0: number[];
+  u0: number[];
+  t: number;
+}
+
 export interface BlockDefinition {
   type: string;
   category: string;
@@ -79,6 +86,11 @@ export interface BlockDefinition {
   outputs: (ctx: BlockContext) => void;
   derivatives?: (ctx: BlockContext) => void;
   updateDiscrete?: (ctx: BlockContext) => void;
+  /**
+   * Optional closed-form / symbolic Jacobian about (x0,u0,t).
+   * Return null to fall back to finite differences.
+   */
+  linearize?: (args: LinearizePoint) => { A: number[][]; B: number[][] } | null;
 }
 
 export interface GraphNode {

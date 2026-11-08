@@ -973,7 +973,7 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'statespace',
     category: 'Continuous',
     name: 'State-Space',
-    description: 'ẋ = Ax + Bu, y = Cx + Du. Rows are separated by semicolons.',
+    description: 'ẋ = Ax + Bu, y = Cx + Du. Rows are separated by semicolons. Already linear — Design uses A,B directly.',
     renderer: 'sim',
     defaultParameters: { A: '0 1; -1 -0.4', B: '0; 1', C: '1 0', D: '0', x0: '0 0' },
     parameters: [
@@ -1039,6 +1039,13 @@ export const BLOCKS: BlockDefinition[] = [
         for (let j = 0; j < ss.m; j++) d += ss.B[i][j] * u[j];
         ctx.deriv[i] = d;
       }
+    },
+    linearize: (args) => {
+      const ss = ssOf(args.parameters);
+      return {
+        A: ss.A.map((row) => row.slice()),
+        B: ss.B.map((row) => row.slice()),
+      };
     },
   },
   {

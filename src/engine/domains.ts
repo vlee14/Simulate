@@ -13,11 +13,12 @@ import {
 import {
   compileExpression,
   expressionUsesInput,
+  jacobianFromExpressions,
   splitExpressions,
 } from './expr';
 import { clampPositive, parseAssignments, solveDense } from './dynamics';
 import { parseStageConfig } from './scene';
-import { BlockContext, BlockDefinition, Param, ParamSpec, PortDef } from './types';
+import { BlockContext, BlockDefinition, LinearizePoint, Param, ParamSpec, PortDef } from './types';
 
 function num(p: Record<string, Param>, key: string, fallback = 0): number {
   const v = Number(p[key]);
@@ -142,6 +143,9 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       rhs: 'u1; 0',
       y: 'x1; x2',
       x0: '1 0',
+      linMode: 'auto',
+      linA: '',
+      linB: '',
     },
     parameters: [
       {
@@ -205,6 +209,35 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
         wide: true,
         group: 'Dynamics',
       },
+      {
+        key: 'linMode',
+        label: 'Linearize',
+        type: 'select',
+        group: 'Linearization',
+        options: [
+          { value: 'auto', label: 'Auto (analytical → FD)' },
+          { value: 'analytical', label: 'Analytical Jacobian' },
+          { value: 'supplied', label: 'Supply A, B' },
+          { value: 'fd', label: 'Finite difference' },
+        ],
+        help: 'Explicit ODEs differentiate ẋ expressions symbolically. Or paste A,B.',
+      },
+      {
+        key: 'linA',
+        label: 'A (supplied)',
+        type: 'string',
+        wide: true,
+        group: 'Linearization',
+        help: 'n×n. Rows `;`-separated. Entries may use x1…, u1…, t, constants.',
+      },
+      {
+        key: 'linB',
+        label: 'B (supplied)',
+        type: 'string',
+        wide: true,
+        group: 'Linearization',
+        help: 'n×nu. Same expression rules as A.',
+      },
     ],
     hasDirectFeedthrough: (p) => {
       const y = text(p, 'y', '');
@@ -243,6 +276,27 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       const parts = splitExpressions(text(ctx.parameters, 'dx', ''));
       if (parts.length !== size.nx) throw new Error(`Expected ${size.nx} derivative expressions, got ${parts.length}`);
       for (let i = 0; i < size.nx; i++) ctx.deriv[i] = runExpr(parts[i], vars);
+    },
+    linearize: (args: LinearizePoint) => {
+      const size = odeSize(args.parameters);
+      if (size.form !== 'explicit') return null;
+      const parts = splitExpressions(text(args.parameters, 'dx', ''));
+      if (parts.length !== size.nx) return null;
+      const fakeCtx: BlockContext = {
+        id: 'lin',
+        t: args.t,
+        dt: 1e-6,
+        inputs: Object.fromEntries(Array.from({ length: size.nu }, (_, i) => [`u${i + 1}`, args.u0[i] ?? 0])),
+        outputs: {},
+        parameters: args.parameters,
+        state: new Float64Array(args.x0),
+        discrete: new Float64Array(0),
+        deriv: new Float64Array(size.nx),
+      };
+      const vars = bindVars(fakeCtx);
+      const stateNames = Array.from({ length: size.nx }, (_, i) => `x${i + 1}`);
+      const inputNames = Array.from({ length: size.nu }, (_, i) => `u${i + 1}`);
+      return jacobianFromExpressions(parts, stateNames, inputNames, vars);
     },
   },
   {
@@ -285,6 +339,18 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       ctx.deriv[0] = ctx.state[1];
       ctx.deriv[1] = K * u - 2 * zeta * wn * ctx.state[1] - wn * wn * ctx.state[0];
     },
+    linearize: (args) => {
+      const wn = Math.max(1e-6, num(args.parameters, 'wn', 1));
+      const zeta = num(args.parameters, 'zeta', 0.2);
+      const K = num(args.parameters, 'K', 1);
+      return {
+        A: [
+          [0, 1],
+          [-wn * wn, -2 * zeta * wn],
+        ],
+        B: [[0], [K]],
+      };
+    },
   },
   {
     type: 'mass',
@@ -321,6 +387,16 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       ctx.deriv[0] = ctx.state[1];
       ctx.deriv[1] = (ctx.inputs.F ?? 0) / m;
     },
+    linearize: (args) => {
+      const m = clampPositive(num(args.parameters, 'm', 1));
+      return {
+        A: [
+          [0, 1],
+          [0, 0],
+        ],
+        B: [[0], [1 / m]],
+      };
+    },
   },
   {
     type: 'inertia',
@@ -356,6 +432,16 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       const J = clampPositive(num(ctx.parameters, 'J', 0.05));
       ctx.deriv[0] = ctx.state[1];
       ctx.deriv[1] = (ctx.inputs.T ?? 0) / J;
+    },
+    linearize: (args) => {
+      const J = clampPositive(num(args.parameters, 'J', 0.05));
+      return {
+        A: [
+          [0, 1],
+          [0, 0],
+        ],
+        B: [[0], [1 / J]],
+      };
     },
   },
   {
@@ -451,6 +537,24 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       ctx.deriv[0] = (Va - R * i - Kb * w) / L;
       ctx.deriv[1] = (Kt * i - b * w - TL) / J;
     },
+    linearize: (args) => {
+      const R = Math.max(0, num(args.parameters, 'R', 1));
+      const L = clampPositive(num(args.parameters, 'L', 0.5));
+      const Kt = num(args.parameters, 'Kt', 0.01);
+      const Kb = num(args.parameters, 'Kb', 0.01);
+      const J = clampPositive(num(args.parameters, 'J', 0.01));
+      const b = Math.max(0, num(args.parameters, 'b', 0.1));
+      return {
+        A: [
+          [-R / L, -Kb / L],
+          [Kt / J, -b / J],
+        ],
+        B: [
+          [1 / L, 0],
+          [0, -1 / J],
+        ],
+      };
+    },
   },
   {
     type: 'rlc',
@@ -491,6 +595,18 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       const V = ctx.inputs.V ?? 0;
       ctx.deriv[0] = ctx.state[1] / C;
       ctx.deriv[1] = (V - ctx.state[0] - R * ctx.state[1]) / L;
+    },
+    linearize: (args) => {
+      const R = Math.max(0, num(args.parameters, 'R', 1));
+      const L = clampPositive(num(args.parameters, 'L', 0.5));
+      const C = clampPositive(num(args.parameters, 'C', 0.2));
+      return {
+        A: [
+          [0, 1 / C],
+          [-1 / L, -R / L],
+        ],
+        B: [[0], [1 / L]],
+      };
     },
   },
   {
@@ -747,6 +863,9 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       return {
         ...DEFAULT_AIRCRAFT,
         paramExprs: '',
+        linMode: 'auto',
+        linA: '',
+        linB: '',
         x0: formatAircraftVector(trim.x),
         u0: formatAircraftVector(trim.u),
         Vtrim: 60,
@@ -809,6 +928,34 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
       },
       numberField('Vtrim', 'Trim speed V (m/s)', 'Trim', 1),
       numberField('htrim', 'Trim altitude h (m)', 'Trim', 10),
+      {
+        key: 'linMode',
+        label: 'Linearize',
+        type: 'select',
+        group: 'Linearization',
+        options: [
+          { value: 'auto', label: 'Auto (FD; or supply A,B)' },
+          { value: 'supplied', label: 'Supply A, B' },
+          { value: 'fd', label: 'Finite difference' },
+        ],
+        help: 'Nonlinear 6-DoF uses FD by default. Paste a known A,B (e.g. from flight test / handbook) via linA/linB.',
+      },
+      {
+        key: 'linA',
+        label: 'A (supplied)',
+        type: 'string',
+        wide: true,
+        group: 'Linearization',
+        help: '12×12. Rows `;`-separated. Optional expressions in x1…, u1…, t, params.',
+      },
+      {
+        key: 'linB',
+        label: 'B (supplied)',
+        type: 'string',
+        wide: true,
+        group: 'Linearization',
+        help: '12×4. Same expression rules as A.',
+      },
     ],
     hasDirectFeedthrough: noFeed,
     ports: () => ({
