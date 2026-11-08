@@ -43,6 +43,7 @@ import { runSensitivity } from '../engine/sensitivity';
 import { analyzeStability, logspace, parseVector } from '../engine/stability';
 import { expandGraph, stringifyBlueprint } from '../engine/subsystem';
 import { CONTROLLER_OPTIONS } from '../engine/controllers';
+import { niceTicks, nicholsPhaseSeries, wrapNicholsPhase } from '../engine/plotAxes';
 import {
   designDeadbeat,
   designLead,
@@ -53,6 +54,22 @@ import {
   tunePidImc,
 } from '../engine/synthesis';
 import { close, runEngine } from './helpers';
+
+describe('plot axes', () => {
+  it('wraps Nichols phase into [−180°, 180°] and splits wrap jumps', () => {
+    expect(wrapNicholsPhase(10)).toBe(10);
+    expect(wrapNicholsPhase(-180)).toBe(-180);
+    expect(wrapNicholsPhase(190)).toBe(-170);
+    expect(wrapNicholsPhase(-400)).toBe(-40);
+    expect(niceTicks(-2, 2, 5).length).toBeGreaterThanOrEqual(3);
+    const segs = nicholsPhaseSeries([
+      { phaseDeg: 170, magDb: 0 },
+      { phaseDeg: 190, magDb: -1 },
+      { phaseDeg: -170, magDb: -2 },
+    ]);
+    expect(segs.length).toBeGreaterThanOrEqual(2);
+  });
+});
 
 describe('controller synthesis', () => {
   it('catalog covers optimal, classical, compensators, observers', () => {

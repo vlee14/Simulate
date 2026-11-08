@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { McCampaignStats, PercentileBand } from '../engine/mcStats';
+import {
+  formatTick,
+  logDecadeTicks,
+  niceTicks,
+  nicholsPhaseSeries,
+  wrapNicholsPhase,
+} from '../engine/plotAxes';
 import { FreqPoint, RootLocusBranch, StabilityReport } from '../engine/stability';
 
 export type ChartKind = 'bode-mag' | 'bode-phase' | 'nyquist' | 'nichols' | 'poles' | 'rlocus';
@@ -97,6 +104,98 @@ function strokeSeries(
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.stroke();
   ctx.restore();
+}
+
+type Pad = { l: number; r: number; t: number; b: number };
+
+function drawFrame(ctx: CanvasRenderingContext2D, w: number, h: number, pad: Pad, color: string) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(pad.l, pad.t, w - pad.l - pad.r, h - pad.t - pad.b);
+}
+
+function drawLinearAxes(
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    w: number;
+    h: number;
+    pad: Pad;
+    xMin: number;
+    xMax: number;
+    yMin: number;
+    yMax: number;
+    toX: (v: number) => number;
+    toY: (v: number) => number;
+    xTicks: number[];
+    yTicks: number[];
+    xFormat?: (v: number) => string;
+    yFormat?: (v: number) => string;
+    xUnit: string;
+    yUnit: string;
+    color: string;
+    labelColor: string;
+    crosshair?: { x: number; y: number };
+  }
+) {
+  const {
+    w,
+    h,
+    pad,
+    toX,
+    toY,
+    xTicks,
+    yTicks,
+    xFormat = (v) => formatTick(v),
+    yFormat = (v) => formatTick(v),
+    xUnit,
+    yUnit,
+    color,
+    labelColor,
+    crosshair,
+  } = opts;
+  drawFrame(ctx, w, h, pad, color);
+  if (crosshair) {
+    ctx.strokeStyle = color;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(toX(crosshair.x), pad.t);
+    ctx.lineTo(toX(crosshair.x), h - pad.b);
+    ctx.moveTo(pad.l, toY(crosshair.y));
+    ctx.lineTo(w - pad.r, toY(crosshair.y));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.fillStyle = labelColor;
+  ctx.strokeStyle = color;
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (const v of xTicks) {
+    const x = toX(v);
+    if (x < pad.l - 1 || x > w - pad.r + 1) continue;
+    ctx.beginPath();
+    ctx.moveTo(x, h - pad.b);
+    ctx.lineTo(x, h - pad.b + 4);
+    ctx.stroke();
+    ctx.fillText(xFormat(v), x, h - pad.b + 5);
+  }
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (const v of yTicks) {
+    const y = toY(v);
+    if (y < pad.t - 1 || y > h - pad.b + 1) continue;
+    ctx.beginPath();
+    ctx.moveTo(pad.l - 4, y);
+    ctx.lineTo(pad.l, y);
+    ctx.stroke();
+    ctx.fillText(yFormat(v), pad.l - 6, y);
+  }
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(xUnit, w - pad.r, h - 2);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(yUnit, 4, 4);
 }
 
 /** WebGL2 line batch for dense MC polylines (log-x already baked into xy pack). */
@@ -250,43 +349,60 @@ export function EnsembleChart({
     ctx.fillStyle = theme.bg;
     ctx.fillRect(0, 0, plotW, plotH);
 
-    const padL = kind === 'bode-mag' || kind === 'bode-phase' || kind === 'nichols' ? 34 : 18;
-    const padR = 10;
-    const padT = 14;
-    const padB = 22;
-
-    const drawAxes = (toX: (v: number) => number, toY: (v: number) => number, x0: number, y0: number) => {
-      ctx.strokeStyle = theme.axis;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(toX(x0), padT);
-      ctx.lineTo(toX(x0), plotH - padB);
-      ctx.moveTo(padL, toY(y0));
-      ctx.lineTo(plotW - padR, toY(y0));
-      ctx.stroke();
+    const pad: Pad = {
+      l: kind === 'bode-mag' || kind === 'bode-phase' || kind === 'nichols' ? 42 : 36,
+      r: 12,
+      t: 16,
+      b: 28,
     };
 
-    if (kind === 'poles') {
+    if (kind === 'poles' || kind === 'rlocus') {
+      const branches: RootLocusBranch[] = kind === 'rlocus' ? nominal?.rootLocus ?? [] : [];
       const pts = [
         ...(nominal?.polesOpen ?? []),
         ...(nominal?.polesClosed ?? []),
-        ...(campaign?.poleCloud ?? []),
+        ...(kind === 'poles' ? campaign?.poleCloud ?? [] : []),
         ...(selected?.polesClosed ?? []),
+        ...branches.flatMap((b) => b.points),
       ];
       if (!pts.length) return;
-      const lim = Math.max(1, ...pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)))) * 1.15;
-      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (plotW - padL - padR);
-      const toY = (im: number) => plotH - padB - ((im + lim) / (2 * lim)) * (plotH - padT - padB);
-      drawAxes(toX, toY, 0, 0);
-      const cloud = campaign?.poleCloud ?? [];
-      ctx.fillStyle = theme.mc;
-      ctx.globalAlpha = cloud.length > 2000 ? 0.08 : cloud.length > 400 ? 0.15 : 0.35;
-      for (const p of cloud) {
-        ctx.beginPath();
-        ctx.arc(toX(p.real), toY(p.imag), cloud.length > 2000 ? 1.2 : 2, 0, Math.PI * 2);
-        ctx.fill();
+      const lim = Math.max(1, ...pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)))) * (kind === 'rlocus' ? 1.2 : 1.15);
+      const toX = (re: number) => pad.l + ((re + lim) / (2 * lim)) * (plotW - pad.l - pad.r);
+      const toY = (im: number) => plotH - pad.b - ((im + lim) / (2 * lim)) * (plotH - pad.t - pad.b);
+      const ticks = niceTicks(-lim, lim, 5);
+      drawLinearAxes(ctx, {
+        w: plotW,
+        h: plotH,
+        pad,
+        xMin: -lim,
+        xMax: lim,
+        yMin: -lim,
+        yMax: lim,
+        toX,
+        toY,
+        xTicks: ticks,
+        yTicks: ticks,
+        xUnit: 'Re (1/s)',
+        yUnit: 'Im (1/s)',
+        color: theme.axis,
+        labelColor: theme.label,
+        crosshair: { x: 0, y: 0 },
+      });
+      if (kind === 'poles') {
+        const cloud = campaign?.poleCloud ?? [];
+        ctx.fillStyle = theme.mc;
+        ctx.globalAlpha = cloud.length > 2000 ? 0.08 : cloud.length > 400 ? 0.15 : 0.35;
+        for (const p of cloud) {
+          ctx.beginPath();
+          ctx.arc(toX(p.real), toY(p.imag), cloud.length > 2000 ? 1.2 : 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      } else {
+        for (const b of branches) {
+          strokeSeries(ctx, b.points.map((p) => ({ x: toX(p.real), y: toY(p.imag) })), theme.nom, 1.8);
+        }
       }
-      ctx.globalAlpha = 1;
       if (nominal) {
         ctx.strokeStyle = theme.nom;
         ctx.lineWidth = 1.6;
@@ -302,7 +418,7 @@ export function EnsembleChart({
           ctx.fill();
         }
       }
-      if (selected) {
+      if (selected && kind === 'poles') {
         ctx.strokeStyle = theme.sel;
         ctx.lineWidth = 1.8;
         for (const p of selected.polesClosed) {
@@ -331,8 +447,8 @@ export function EnsembleChart({
       }
       const xMin = band?.x[0] ?? Math.log10(nom[0]?.w ?? 1e-3);
       const xMax = band?.x[(band?.x.length ?? 1) - 1] ?? Math.log10(nom[nom.length - 1]?.w ?? 1e3);
-      const toX = (lx: number) => padL + ((lx - xMin) / (xMax - xMin || 1)) * (plotW - padL - padR);
-      const toY = (y: number) => padT + ((yMax - y) / (yMax - yMin || 1)) * (plotH - padT - padB);
+      const toX = (lx: number) => pad.l + ((lx - xMin) / (xMax - xMin || 1)) * (plotW - pad.l - pad.r);
+      const toY = (y: number) => pad.t + ((yMax - y) / (yMax - yMin || 1)) * (plotH - pad.t - pad.b);
       if (band) {
         drawBand(ctx, band, toX, toY, 'p05', 'p95', theme.band);
         drawBand(ctx, band, toX, toY, 'p25', 'p75', theme.bandInner);
@@ -399,11 +515,25 @@ export function EnsembleChart({
           1.8
         );
       }
-      ctx.fillStyle = theme.label;
-      ctx.font = '9px system-ui, sans-serif';
-      ctx.fillText(kind === 'bode-mag' ? 'dB' : 'deg', 4, padT + 8);
-      ctx.textAlign = 'right';
-      ctx.fillText('ω', plotW - padR, plotH - 6);
+      drawLinearAxes(ctx, {
+        w: plotW,
+        h: plotH,
+        pad,
+        xMin,
+        xMax,
+        yMin,
+        yMax,
+        toX,
+        toY,
+        xTicks: logDecadeTicks(xMin, xMax),
+        yTicks: niceTicks(yMin, yMax, 5),
+        xFormat: (v) => formatTick(v, 'log10'),
+        yFormat: (v) => (kind === 'bode-phase' ? formatTick(v, 'deg') : formatTick(v)),
+        xUnit: 'ω (rad/s)',
+        yUnit: kind === 'bode-mag' ? '|L| (dB)' : '∠L (°)',
+        color: theme.axis,
+        labelColor: theme.label,
+      });
       return;
     }
 
@@ -415,13 +545,9 @@ export function EnsembleChart({
       ];
       let lim = Math.max(1, ...vals.map((v) => Math.abs(v))) * 1.15;
       lim = Math.min(lim, 20);
-      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (plotW - padL - padR);
-      const toY = (im: number) => plotH - padB - ((im + lim) / (2 * lim)) * (plotH - padT - padB);
-      drawAxes(toX, toY, 0, 0);
-      ctx.strokeStyle = 'rgba(196,92,38,0.4)';
-      ctx.beginPath();
-      ctx.arc(toX(-1), toY(0), 8, 0, Math.PI * 2);
-      ctx.stroke();
+      const toX = (re: number) => pad.l + ((re + lim) / (2 * lim)) * (plotW - pad.l - pad.r);
+      const toY = (im: number) => plotH - pad.b - ((im + lim) / (2 * lim)) * (plotH - pad.t - pad.b);
+      const ticks = niceTicks(-lim, lim, 5);
       const alpha = (ensembleFreq?.length ?? 0) > 80 ? 0.1 : 0.35;
       for (const t of ensembleFreq ?? []) {
         strokeSeries(
@@ -434,6 +560,29 @@ export function EnsembleChart({
       }
       if (nom.length) strokeSeries(ctx, nom.map((p) => ({ x: toX(p.re), y: toY(p.im) })), theme.nom, 2.1);
       if (selected?.freq?.length) strokeSeries(ctx, selected.freq.map((p) => ({ x: toX(p.re), y: toY(p.im) })), theme.sel, 1.8);
+      ctx.strokeStyle = 'rgba(196,92,38,0.55)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(toX(-1), toY(0), 6, 0, Math.PI * 2);
+      ctx.stroke();
+      drawLinearAxes(ctx, {
+        w: plotW,
+        h: plotH,
+        pad,
+        xMin: -lim,
+        xMax: lim,
+        yMin: -lim,
+        yMax: lim,
+        toX,
+        toY,
+        xTicks: ticks,
+        yTicks: ticks,
+        xUnit: 'Re(L)',
+        yUnit: 'Im(L)',
+        color: theme.axis,
+        labelColor: theme.label,
+        crosshair: { x: 0, y: 0 },
+      });
       return;
     }
 
@@ -441,59 +590,56 @@ export function EnsembleChart({
       const nom = nominal?.freq ?? [];
       const all = [...nom, ...(ensembleFreq ?? []).flatMap((t) => t.freq)];
       if (all.length < 2) return;
-      let phMin = Math.min(...all.map((p) => p.phaseDeg), -270);
-      let phMax = Math.max(...all.map((p) => p.phaseDeg), 0);
+      // Nichols window: wrap phase into [−180°, 180°].
+      const wrapped = all.map((p) => ({ phaseDeg: wrapNicholsPhase(p.phaseDeg), magDb: p.magDb }));
+      let phMin = Math.min(-180, ...wrapped.map((p) => p.phaseDeg));
+      let phMax = Math.max(180, ...wrapped.map((p) => p.phaseDeg));
+      phMin = Math.min(phMin, -180);
+      phMax = Math.max(phMax, 180);
       let magMin = Math.min(...all.map((p) => p.magDb), -40);
       let magMax = Math.max(...all.map((p) => p.magDb), 20);
-      const toX = (ph: number) => padL + ((ph - phMin) / (phMax - phMin || 1)) * (plotW - padL - padR);
-      const toY = (db: number) => padT + ((magMax - db) / (magMax - magMin || 1)) * (plotH - padT - padB);
-      ctx.strokeStyle = theme.axis;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      ctx.moveTo(toX(-180), padT);
-      ctx.lineTo(toX(-180), plotH - padB);
-      ctx.moveTo(padL, toY(0));
-      ctx.lineTo(plotW - padR, toY(0));
-      ctx.stroke();
-      ctx.setLineDash([]);
+      const toX = (ph: number) => pad.l + ((ph - phMin) / (phMax - phMin || 1)) * (plotW - pad.l - pad.r);
+      const toY = (db: number) => pad.t + ((magMax - db) / (magMax - magMin || 1)) * (plotH - pad.t - pad.b);
       const alpha = (ensembleFreq?.length ?? 0) > 80 ? 0.1 : 0.35;
-      for (const t of ensembleFreq ?? []) {
-        strokeSeries(ctx, t.freq.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), theme.mc, 1, alpha);
-      }
-      if (nom.length) strokeSeries(ctx, nom.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), theme.nom, 2.1);
-      if (selected?.freq?.length) strokeSeries(ctx, selected.freq.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), theme.sel, 1.8);
-      return;
-    }
-
-    if (kind === 'rlocus') {
-      const branches: RootLocusBranch[] = nominal?.rootLocus ?? [];
-      const pts = [
-        ...(nominal?.polesOpen ?? []),
-        ...(nominal?.polesClosed ?? []),
-        ...branches.flatMap((b) => b.points),
-      ];
-      if (!pts.length) return;
-      const lim = Math.max(1, ...pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)))) * 1.2;
-      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (plotW - padL - padR);
-      const toY = (im: number) => plotH - padB - ((im + lim) / (2 * lim)) * (plotH - padT - padB);
-      drawAxes(toX, toY, 0, 0);
-      for (const b of branches) {
-        strokeSeries(ctx, b.points.map((p) => ({ x: toX(p.real), y: toY(p.imag) })), theme.nom, 1.8);
-      }
-      if (nominal) {
-        ctx.strokeStyle = theme.nom;
-        for (const p of nominal.polesOpen) {
-          ctx.beginPath();
-          ctx.arc(toX(p.real), toY(p.imag), 4, 0, Math.PI * 2);
-          ctx.stroke();
+      const strokeWrapped = (
+        series: { phaseDeg: number; magDb: number }[],
+        color: string,
+        width: number,
+        a = 1
+      ) => {
+        for (const seg of nicholsPhaseSeries(series)) {
+          strokeSeries(
+            ctx,
+            seg.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })),
+            color,
+            width,
+            a
+          );
         }
-        ctx.fillStyle = theme.nom;
-        for (const p of nominal.polesClosed) {
-          ctx.beginPath();
-          ctx.arc(toX(p.real), toY(p.imag), 3.2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
+      };
+      for (const t of ensembleFreq ?? []) strokeWrapped(t.freq, theme.mc, 1, alpha);
+      if (nom.length) strokeWrapped(nom, theme.nom, 2.1);
+      if (selected?.freq?.length) strokeWrapped(selected.freq, theme.sel, 1.8);
+      drawLinearAxes(ctx, {
+        w: plotW,
+        h: plotH,
+        pad,
+        xMin: phMin,
+        xMax: phMax,
+        yMin: magMin,
+        yMax: magMax,
+        toX,
+        toY,
+        xTicks: niceTicks(phMin, phMax, 5),
+        yTicks: niceTicks(magMin, magMax, 5),
+        xFormat: (v) => formatTick(v, 'deg'),
+        yFormat: (v) => formatTick(v),
+        xUnit: '∠L (°)',
+        yUnit: '|L| (dB)',
+        color: theme.axis,
+        labelColor: theme.label,
+        crosshair: { x: -180, y: 0 },
+      });
     }
   }, [kind, plotW, plotH, nominal, selected, ensembleFreq, campaign, showAllLines]);
 
