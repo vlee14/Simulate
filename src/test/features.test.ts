@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { PLANT_RECIPES } from '../model/builder';
 import {
   EXAMPLES,
+  aircraftDocument,
   documentGraph,
   harmonicDocument,
   motorDocument,
@@ -17,7 +18,14 @@ import {
   quadrotorDocument,
 } from '../model/examples';
 import { QUADROTOR_ODE, CART_DOUBLE_PENDULUM_ODE } from '../model/plants';
-import { SCENE_CART_PENDULUM, SCENE_QUAD, SCENE_ROTOR, SCENE_TANK } from '../model/scenes';
+import { SCENE_AIRCRAFT, SCENE_CART_PENDULUM, SCENE_QUAD, SCENE_ROTOR, SCENE_TANK } from '../model/scenes';
+import {
+  DEFAULT_AIRCRAFT,
+  aircraftDerivatives,
+  linearizeAircraft,
+  trimAircraft,
+} from '../engine/aircraft6dof';
+import { getBlock } from '../engine/blocks';
 import { HistoryStack } from '../sim/history';
 import { SimCompileError, compile } from '../engine/compile';
 import { eigenvalues } from '../engine/eig';
@@ -175,6 +183,40 @@ describe('core numerics', () => {
         ]
       )
     ).toThrow(SimCompileError);
+  });
+});
+
+describe('aircraft 6-DoF (NASA H-1391)', () => {
+  it('trims wings-level cruise and FD-linearizes for Design analysis', () => {
+    const trim = trimAircraft(DEFAULT_AIRCRAFT, { V: 60, h: 1000 });
+    expect(trim.residual).toBeLessThan(1e-6);
+    const f = aircraftDerivatives(trim.x, trim.u, DEFAULT_AIRCRAFT);
+    // At trim: rotational/α/β accelerations ~0; North speed ≈ V.
+    expect(Math.hypot(f[0]!, f[1]!, f[2]!, f[4]!, f[5]!)).toBeLessThan(1e-4);
+    expect(f[10]!).toBeCloseTo(60, 0);
+
+    const { A, B } = linearizeAircraft(trim.x, trim.u, DEFAULT_AIRCRAFT);
+    expect(A).toHaveLength(12);
+    expect(B[0]).toHaveLength(4);
+    const viaBlock = linearizeBlock('aircraft', { ...DEFAULT_AIRCRAFT, x0: trim.x.join(' ') }, trim.x, trim.u);
+    expect(viaBlock.A[3]![3]).toBeCloseTo(A[3]![3]!, 2);
+
+    // Open-loop A (about trim) should be finite; Design FD path matches dedicated linearizeAircraft.
+    expect(eigenvalues(A).every((e) => Number.isFinite(e.real))).toBe(true);
+    // Elevator channel loop for margins / Bode (SISO return ratio about trim).
+    const Bde = B.map((row) => [row[0] ?? 0]);
+    const Kpitch = new Array(12).fill(0);
+    Kpitch[1] = 0.4; // q feedback → δe
+    Kpitch[4] = 1.2; // α feedback → δe
+    const loop = analyzeStability(A, Bde, Kpitch, ['poles', 'bode', 'nyquist', 'nichols', 'margins']);
+    expect(loop.freq.length).toBeGreaterThan(20);
+    expect(loop.margins).toBeTruthy();
+
+    const def = getBlock('aircraft');
+    expect(def?.continuousStates({})).toBe(12);
+    expect(PLANT_RECIPES.some((r) => r.id === 'aircraft')).toBe(true);
+    expect(SCENE_AIRCRAFT.inputs.includes('xN')).toBe(true);
+    expect(aircraftDocument().nodes.some((n) => n.blockType === 'aircraft')).toBe(true);
   });
 });
 

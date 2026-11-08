@@ -1,4 +1,15 @@
 import {
+  AIRCRAFT_INPUT_LABELS,
+  AIRCRAFT_NX,
+  AIRCRAFT_STATE_LABELS,
+  aircraftDerivatives,
+  aircraftInitialState,
+  DEFAULT_AIRCRAFT,
+  formatAircraftVector,
+  parseAircraftParams,
+  trimAircraft,
+} from './aircraft6dof';
+import {
   compileExpression,
   expressionUsesInput,
   splitExpressions,
@@ -723,5 +734,122 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     discreteStates: none,
     outputs: () => undefined,
   },
+  {
+    type: 'aircraft',
+    category: 'Dynamics',
+    name: 'Aircraft 6-DoF',
+    description:
+      'Rigid 6-DoF aircraft (NASA TM 88104 / H-1391 state): body rates, V/α/β, Euler angles, NED position. Linear aero + thrust; Design uses FD linearization about trim.',
+    renderer: 'plant',
+    defaultParameters: (() => {
+      const trim = trimAircraft(DEFAULT_AIRCRAFT, { V: 60, h: 1000 });
+      return {
+        ...DEFAULT_AIRCRAFT,
+        x0: formatAircraftVector(trim.x),
+        u0: formatAircraftVector(trim.u),
+        Vtrim: 60,
+        htrim: 1000,
+      };
+    })(),
+    parameters: [
+      numberField('m', 'Mass m (kg)', 'Mass / geometry', 1),
+      numberField('S', 'Wing area S (m²)', 'Mass / geometry', 0.1),
+      numberField('b', 'Span b (m)', 'Mass / geometry', 0.1),
+      numberField('c', 'Chord c̄ (m)', 'Mass / geometry', 0.01),
+      numberField('Ixx', 'Ixx', 'Inertia', 1),
+      numberField('Iyy', 'Iyy', 'Inertia', 1),
+      numberField('Izz', 'Izz', 'Inertia', 1),
+      numberField('Ixz', 'Ixz', 'Inertia', 1),
+      numberField('rho', 'Air density ρ', 'Atmosphere', 0.01),
+      numberField('g', 'Gravity g', 'Atmosphere', 0.01),
+      numberField('Tmax', 'Max thrust (N)', 'Propulsion', 10),
+      numberField('CL0', 'CL0', 'Aero · lift/drag', 0.01),
+      numberField('CLa', 'CL_α', 'Aero · lift/drag', 0.01),
+      numberField('CLq', 'CL_q', 'Aero · lift/drag', 0.01),
+      numberField('CLde', 'CL_δe', 'Aero · lift/drag', 0.01),
+      numberField('CD0', 'CD0', 'Aero · lift/drag', 0.001),
+      numberField('CDa', 'CD_α', 'Aero · lift/drag', 0.01),
+      numberField('Cm0', 'Cm0', 'Aero · pitch', 0.01),
+      numberField('Cma', 'Cm_α', 'Aero · pitch', 0.01),
+      numberField('Cmq', 'Cm_q', 'Aero · pitch', 0.1),
+      numberField('Cmde', 'Cm_δe', 'Aero · pitch', 0.01),
+      numberField('CYb', 'CY_β', 'Aero · lateral', 0.01),
+      numberField('Clb', 'Cl_β', 'Aero · lateral', 0.01),
+      numberField('Clp', 'Cl_p', 'Aero · lateral', 0.01),
+      numberField('Clda', 'Cl_δa', 'Aero · lateral', 0.01),
+      numberField('Cnb', 'Cn_β', 'Aero · lateral', 0.01),
+      numberField('Cnr', 'Cn_r', 'Aero · lateral', 0.01),
+      numberField('Cndr', 'Cn_δr', 'Aero · lateral', 0.01),
+      {
+        key: 'x0',
+        label: 'x0 [p q r V α β φ θ ψ h xN yE]',
+        type: 'string',
+        wide: true,
+        group: 'Trim',
+        help: 'NASA H-1391 ordering. Use Trim helpers / Design linearization point.',
+      },
+      {
+        key: 'u0',
+        label: 'u0 [δe δa δr δt] (info)',
+        type: 'string',
+        wide: true,
+        group: 'Trim',
+        help: 'Nominal surface/throttle trim used by examples (not an internal state).',
+      },
+      numberField('Vtrim', 'Trim speed V (m/s)', 'Trim', 1),
+      numberField('htrim', 'Trim altitude h (m)', 'Trim', 10),
+    ],
+    hasDirectFeedthrough: noFeed,
+    ports: () => ({
+      inputs: AIRCRAFT_INPUT_LABELS.map((name, i) => ({
+        id: `u${i + 1}`,
+        name: name,
+        domain: 'signal' as const,
+      })),
+      outputs: [
+        ...AIRCRAFT_STATE_LABELS.slice(0, 10).map((name, i) => ({
+          id: `y${i}`,
+          name,
+          domain: 'mechanical' as const,
+        })),
+        { id: 'y10', name: 'xN', domain: 'mechanical' as const },
+        { id: 'y11', name: 'yE', domain: 'mechanical' as const },
+      ],
+    }),
+    continuousStates: () => AIRCRAFT_NX,
+    discreteStates: none,
+    init: (ctx) => {
+      const x0 = aircraftInitialState(ctx.parameters);
+      for (let i = 0; i < AIRCRAFT_NX; i++) ctx.state[i] = x0[i] ?? 0;
+    },
+    outputs: (ctx) => {
+      for (let i = 0; i < AIRCRAFT_NX; i++) ctx.outputs[`y${i}`] = ctx.state[i] ?? 0;
+    },
+    derivatives: (ctx) => {
+      const p = parseAircraftParams(ctx.parameters);
+      const x = Array.from(ctx.state);
+      const u = [
+        ctx.inputs.u1 ?? 0,
+        ctx.inputs.u2 ?? 0,
+        ctx.inputs.u3 ?? 0,
+        ctx.inputs.u4 ?? 0,
+      ];
+      const f = aircraftDerivatives(x, u, p);
+      for (let i = 0; i < AIRCRAFT_NX; i++) ctx.deriv[i] = f[i] ?? 0;
+    },
+  },
 ];
+
+/** Recompute wings-level trim into aircraft block parameters (x0 / u0). */
+export function retakeAircraftTrim(parameters: Record<string, Param>): Record<string, Param> {
+  const p = parseAircraftParams(parameters);
+  const V = num(parameters, 'Vtrim', 60);
+  const h = num(parameters, 'htrim', 1000);
+  const trim = trimAircraft(p, { V, h });
+  return {
+    ...parameters,
+    x0: formatAircraftVector(trim.x),
+    u0: formatAircraftVector(trim.u),
+  };
+}
 

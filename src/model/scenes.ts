@@ -87,6 +87,25 @@ export const SCENE_QUAD = {
   ]),
 } as const;
 
+/** Plan-view Stage for 6-DoF aircraft (North/East track + altitude readout). */
+export const SCENE_AIRCRAFT = {
+  inputs: 'xN:mechanical,yE:mechanical,h:mechanical,psi:mechanical,V:mechanical,alpha:mechanical',
+  scale: 0.08,
+  trail: 'ac',
+  nudgePlant: 'plant',
+  nudge: 'Pitch+|4|0.04; Pitch−|4|-0.04; Roll+|0|0.05; Roll−|0|-0.05',
+  readouts: 'V|V|number;h|h|number;α|alpha|deg;ψ|psi|deg',
+  control: 'Elev bias|debias|-0.2|0.2',
+  disturbance: 'Gust|pulse|gust|0.15',
+  interact: 'ac|nudge|4|0.03; *|control',
+  scene: JSON.stringify([
+    { type: 'ground' },
+    { type: 'box', id: 'ac', x: '$xN', y: '$yE', w: 18, h: 4, color: '#5ec8ff' },
+    { type: 'link', id: 'nose', from: 'ac', angle: '$psi', length: 14, color: '#e7a23a' },
+    { type: 'arrow', value: '$V' },
+  ]),
+} as const;
+
 /** Compact Stage for the second-order PID demo (position readout + hand disturbance). */
 export const SCENE_SECOND_ORDER = {
   inputs: 'y:signal,u:signal',

@@ -1,5 +1,25 @@
 /** Reusable plant parameter packs built from generic Dynamics blocks. */
 
+import {
+  DEFAULT_AIRCRAFT,
+  formatAircraftVector,
+  trimAircraft,
+} from '../engine/aircraft6dof';
+
+/** Trimmed 6-DoF aircraft (NASA H-1391 state) for the dedicated `aircraft` block. */
+export function aircraftPlantParameters(opts: { V?: number; h?: number } = {}) {
+  const V = opts.V ?? 60;
+  const h = opts.h ?? 1000;
+  const trim = trimAircraft(DEFAULT_AIRCRAFT, { V, h });
+  return {
+    ...DEFAULT_AIRCRAFT,
+    Vtrim: V,
+    htrim: h,
+    x0: formatAircraftVector(trim.x),
+    u0: formatAircraftVector(trim.u),
+  } as const;
+}
+
 /**
  * Planar quadrotor + coasting target in one ODE.
  * States: [x, z, vx, vz, θ, ω, xt, zt, vxt, vzt]
