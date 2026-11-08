@@ -60,6 +60,7 @@ On Windows, you can also double-click [`serve.bat`](serve.bat).
 - `npm run build`: Compiles TypeScript and packages the production bundle.
 - `npm run preview`: Previews the production build locally.
 - `npm run typecheck`: Runs TypeScript compiler (`tsc --noEmit`) to validate type safety.
+- `npm test`: Runs the Vitest feature suite (`src/test/features.test.ts`).
 
 ### GitHub Pages
 

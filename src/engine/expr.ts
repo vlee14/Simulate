@@ -244,15 +244,6 @@ export function expressionInputCount(source: string): number {
   return Math.max(1, Math.min(8, max));
 }
 
-/** How many state variables an expression addresses (x1…xN). */
-export function expressionStateCount(source: string): number {
-  let max = 0;
-  const re = /\bx(\d+)\b/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(source))) max = Math.max(max, Number(m[1]));
-  return Math.max(0, Math.min(12, max));
-}
-
 /** Split a semicolon-separated list of expressions. */
 export function splitExpressions(source: string): string[] {
   return source

@@ -51,21 +51,6 @@ export const SCENE_TANK = {
   ]),
 } as const;
 
-export const SCENE_PISTON = {
-  inputs: 'x:mechanical,force:mechanical',
-  scale: 100,
-  trail: '',
-  nudge: '',
-  nudgePlant: '',
-  readouts: 'x|x|number;F|force|number',
-  control: 'Push|manual|-5|5',
-  disturbance: '',
-  interact: '*|control',
-  scene: JSON.stringify([
-    { type: 'piston', id: 'piston', x: '$x', value: '$force', stroke: 0.5, color: '#e7a23a' },
-  ]),
-} as const;
-
 export const SCENE_MASS_SPRING = {
   inputs: 'x:mechanical,v:mechanical',
   scale: 100,

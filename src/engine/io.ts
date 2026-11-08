@@ -334,18 +334,3 @@ export const IO_BLOCKS: BlockDefinition[] = [
   },
 ];
 
-export function ioSummary(type: string, parameters: Record<string, Param>): string {
-  switch (type) {
-    case 'sensor':
-      return text(parameters, 'kind', 'signal');
-    case 'encoder':
-      return `${Math.round(num(parameters, 'counts', 4096))} cpr`;
-    case 'actuator':
-      return text(parameters, 'kind', 'force');
-    case 'inport':
-    case 'outport':
-      return text(parameters, 'name', '');
-    default:
-      return '';
-  }
-}

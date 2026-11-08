@@ -58,15 +58,3 @@ export function stepResponseMetrics(ring: RingBuffer | undefined, settleBand = 0
   };
 }
 
-export interface SweepPoint {
-  value: number;
-  metric: number;
-}
-
-/** Run offline simulations sweeping one numeric parameter. */
-export function sweepParameter(
-  run: (value: number) => number,
-  values: number[]
-): SweepPoint[] {
-  return values.map((value) => ({ value, metric: run(value) }));
-}
