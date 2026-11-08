@@ -140,7 +140,8 @@ function drawLinearAxes(
     yUnit: string;
     color: string;
     labelColor: string;
-    crosshair?: { x: number; y: number };
+    /** Reference guides. `emphasize: 'v'` highlights the vertical (e.g. Nichols −180°). */
+    crosshair?: { x?: number; y?: number; emphasize?: 'v' | 'h' | 'both' };
   }
 ) {
   const {
@@ -161,15 +162,29 @@ function drawLinearAxes(
   } = opts;
   drawFrame(ctx, w, h, pad, color);
   if (crosshair) {
-    ctx.strokeStyle = color;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.moveTo(toX(crosshair.x), pad.t);
-    ctx.lineTo(toX(crosshair.x), h - pad.b);
-    ctx.moveTo(pad.l, toY(crosshair.y));
-    ctx.lineTo(w - pad.r, toY(crosshair.y));
-    ctx.stroke();
-    ctx.setLineDash([]);
+    const emph = crosshair.emphasize ?? 'both';
+    ctx.save();
+    if (crosshair.x != null && Number.isFinite(crosshair.x)) {
+      const strong = emph === 'v' || emph === 'both';
+      ctx.strokeStyle = strong ? 'rgba(196,92,38,0.65)' : color;
+      ctx.lineWidth = strong ? 1.5 : 1;
+      ctx.setLineDash(strong ? [] : [3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(toX(crosshair.x), pad.t);
+      ctx.lineTo(toX(crosshair.x), h - pad.b);
+      ctx.stroke();
+    }
+    if (crosshair.y != null && Number.isFinite(crosshair.y)) {
+      const strong = emph === 'h';
+      ctx.strokeStyle = strong ? 'rgba(196,92,38,0.55)' : color;
+      ctx.lineWidth = strong ? 1.35 : 1;
+      ctx.setLineDash(strong ? [] : [3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, toY(crosshair.y));
+      ctx.lineTo(w - pad.r, toY(crosshair.y));
+      ctx.stroke();
+    }
+    ctx.restore();
   }
   ctx.fillStyle = labelColor;
   ctx.strokeStyle = color;
@@ -390,15 +405,17 @@ export function EnsembleChart({
         ...(nominal?.polesClosed ?? []),
         ...(selected?.polesClosed ?? []),
       ];
-      const lim = symmetricLimit(
-        pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag))),
-        {
-          floor: 1,
-          padFrac: kind === 'rlocus' ? 0.15 : 0.12,
-          percentile: kind === 'poles' && (campaign?.poleCloud?.length ?? 0) > 40 ? 0.92 : 0.98,
-          include: focus.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag))),
-        }
-      );
+      // Prefer closed-loop / open poles for framing; locus tips may extend far on the real axis.
+      const focusR = focus.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)));
+      const allR = pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)));
+      const lim = symmetricLimit(kind === 'rlocus' ? [...focusR, ...allR] : allR, {
+        floor: 1,
+        padFrac: kind === 'rlocus' ? 0.18 : 0.12,
+        // Root locus asymptotes can push far left — keep them with a soft percentile, not the tip.
+        percentile: kind === 'rlocus' ? 0.85 : kind === 'poles' && (campaign?.poleCloud?.length ?? 0) > 40 ? 0.92 : 0.98,
+        include: focusR,
+        ceil: kind === 'rlocus' ? Math.max(12, ...(focusR.length ? focusR : [8])) * 4 : undefined,
+      });
       const { xMin, xMax, yMin, yMax } = publishAuto({ xMin: -lim, xMax: lim, yMin: -lim, yMax: lim });
       const toX = (re: number) => pad.l + ((re - xMin) / (xMax - xMin || 1)) * (plotW - pad.l - pad.r);
       const toY = (im: number) => plotH - pad.b - ((im - yMin) / (yMax - yMin || 1)) * (plotH - pad.t - pad.b);
@@ -418,7 +435,7 @@ export function EnsembleChart({
         yUnit: 'Im (1/s)',
         color: theme.axis,
         labelColor: theme.label,
-        crosshair: { x: 0, y: 0 },
+        crosshair: { x: 0, y: 0, emphasize: 'v' },
       });
       if (kind === 'poles') {
         const cloud = campaign?.poleCloud ?? [];
@@ -473,9 +490,9 @@ export function EnsembleChart({
       const yRawMax = Math.max(...ys.filter(Number.isFinite));
       if (!Number.isFinite(yRawMin) || !Number.isFinite(yRawMax)) return;
       const yWin = niceBounds(yRawMin, yRawMax, {
-        padFrac: 0.12,
-        minSpan: kind === 'bode-mag' ? 10 : 30,
-        anchors: [0],
+        padFrac: kind === 'bode-phase' ? 0.08 : 0.12,
+        minSpan: kind === 'bode-mag' ? 10 : 45,
+        anchors: kind === 'bode-mag' ? [0] : [0, -180],
         targetTicks: 5,
       });
       const autoXMin = band?.x[0] ?? Math.log10(nom[0]?.w ?? 1e-3);
@@ -572,6 +589,12 @@ export function EnsembleChart({
         yUnit: kind === 'bode-mag' ? '|L| (dB)' : '∠L (°)',
         color: theme.axis,
         labelColor: theme.label,
+        crosshair:
+          kind === 'bode-phase'
+            ? { y: -180, emphasize: 'h' }
+            : kind === 'bode-mag'
+              ? { y: 0 }
+              : undefined,
       });
       return;
     }
@@ -623,7 +646,7 @@ export function EnsembleChart({
         yUnit: 'Im(L)',
         color: theme.axis,
         labelColor: theme.label,
-        crosshair: { x: 0, y: 0 },
+        crosshair: { x: 0, y: 0, emphasize: 'v' },
       });
       return;
     }
@@ -632,7 +655,7 @@ export function EnsembleChart({
       const nom = nominal?.freq ?? [];
       const all = [...nom, ...(ensembleFreq ?? []).flatMap((t) => t.freq)];
       if (all.length < 2) return;
-      // Nichols: wrap into [−180°, 180°] and frame around the critical point (−180°, 0 dB).
+      // Classic Nichols: wrap into (−360°, 0°], frame around (−180°, 0 dB).
       const wrapped = all.map((p) => ({ phaseDeg: wrapNicholsPhase(p.phaseDeg), magDb: p.magDb }));
       const critPh = -180;
       const critMag = 0;
@@ -640,18 +663,23 @@ export function EnsembleChart({
         Math.min(critPh, ...wrapped.map((p) => p.phaseDeg)),
         Math.max(critPh, ...wrapped.map((p) => p.phaseDeg)),
         {
-          padFrac: 0.12,
-          minSpan: 120,
-          anchors: [-180, 0, 180],
-          clamp: { min: -180, max: 180 },
+          padFrac: 0.1,
+          minSpan: 180,
+          anchors: [-360, -180, 0],
+          clamp: { min: -360, max: 0 },
           targetTicks: 5,
         }
       );
-      const magWin = niceBounds(
-        Math.min(critMag, ...wrapped.map((p) => p.magDb)),
-        Math.max(critMag, ...wrapped.map((p) => p.magDb)),
-        { padFrac: 0.15, minSpan: 24, anchors: [0], targetTicks: 5 }
-      );
+      // Soft-clip extreme LF |L| so the 0 dB / −180° neighborhood stays readable.
+      const mags = wrapped.map((p) => p.magDb).filter(Number.isFinite).sort((a, b) => a - b);
+      const magLoRaw = mags[Math.max(0, Math.floor(0.05 * (mags.length - 1)))] ?? -20;
+      const magHiRaw = mags[Math.min(mags.length - 1, Math.ceil(0.92 * (mags.length - 1)))] ?? 20;
+      const magWin = niceBounds(Math.min(critMag, magLoRaw), Math.max(critMag, magHiRaw), {
+        padFrac: 0.12,
+        minSpan: 28,
+        anchors: [0],
+        targetTicks: 5,
+      });
       const { xMin: phMin, xMax: phMax, yMin: magMin, yMax: magMax } = publishAuto({
         xMin: phWin.min,
         xMax: phWin.max,
@@ -680,6 +708,9 @@ export function EnsembleChart({
       for (const t of ensembleFreq ?? []) strokeWrapped(t.freq, theme.mc, 1, alpha);
       if (nom.length) strokeWrapped(nom, theme.nom, 2.1);
       if (selected?.freq?.length) strokeWrapped(selected.freq, theme.sel, 1.8);
+      const phTicks = Array.from(new Set([...niceTicks(phMin, phMax, 5), -180, -360, 0]))
+        .filter((v) => v >= phMin - 1e-9 && v <= phMax + 1e-9)
+        .sort((a, b) => a - b);
       drawLinearAxes(ctx, {
         w: plotW,
         h: plotH,
@@ -690,7 +721,7 @@ export function EnsembleChart({
         yMax: magMax,
         toX,
         toY,
-        xTicks: niceTicks(phMin, phMax, 5),
+        xTicks: phTicks,
         yTicks: niceTicks(magMin, magMax, 5),
         xFormat: (v) => formatTick(v, 'deg'),
         yFormat: (v) => formatTick(v),
@@ -698,7 +729,7 @@ export function EnsembleChart({
         yUnit: '|L| (dB)',
         color: theme.axis,
         labelColor: theme.label,
-        crosshair: { x: critPh, y: critMag },
+        crosshair: { x: critPh, y: critMag, emphasize: 'v' },
       });
       // Mark 0 dB / −180° crossings that define PM (ω_gc) and GM (ω_pc).
       const margins = (selected?.margins ?? nominal?.margins) ?? null;

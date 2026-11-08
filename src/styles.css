@@ -867,6 +867,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .stability-plot-head h3,
 .section-head h3 {
   margin: 0;
+  font-size: 13px;
+}
+.stability-plot.compact .stability-plot-head h3 {
+  font-size: 12px;
 }
 .section-head .hint {
   margin: 0;
@@ -987,20 +991,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .plot-detail-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
   gap: 12px;
   min-height: 0;
+  flex: 1;
   padding: 12px 16px 18px;
   overflow: auto;
 }
 .plot-detail-canvas {
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .plot-detail-side {
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+  max-width: 100%;
 }
 .run-scrubber {
   display: grid;
