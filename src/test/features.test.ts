@@ -253,6 +253,54 @@ describe('stability analysis correctness', () => {
     expect(bad.delayMarginSec).toBeNull();
   });
 
+  it('gain-scales the Nichols locus through the origin for LF/HF ω_gc and phase-crossover GM', () => {
+    // Plant G=1/(s+1)^3. Scaling K shifts |L| dB so chosen frequencies hit the Nichols origin axes.
+    const A = [
+      [0, 1, 0],
+      [0, 0, 1],
+      [-1, -3, -3],
+    ];
+    const B = [[0], [0], [1]];
+    const unit = [1, 0, 0];
+    const scaleToUnityAt = (w: number) => {
+      const G = loopResponse(A, B, unit, w)!;
+      const mag = Math.hypot(G.re, G.im);
+      expect(mag).toBeGreaterThan(1e-9);
+      return [1 / mag, 0, 0];
+    };
+
+    const phaseOfG = (w: number) => (-3 * Math.atan(w) * 180) / Math.PI;
+
+    // Low-frequency 0 dB cross: shift plot so |L(ω_lo)|=1 → ω_gc reports that frequency.
+    const wLo = 0.4;
+    const Klo = scaleToUnityAt(wLo);
+    const mLo = loopMargins(A, B, Klo, frequencyResponse(A, B, Klo, 240));
+    expect(mLo.gainCrossoverRad!).toBeCloseTo(wLo, 1);
+    const Llo = loopResponse(A, B, Klo, mLo.gainCrossoverRad!)!;
+    expect(Math.hypot(Llo.re, Llo.im)).toBeCloseTo(1, 2);
+    expect(mLo.phaseMarginDeg!).toBeCloseTo(180 + phaseOfG(mLo.gainCrossoverRad!), 0);
+
+    // High-frequency 0 dB cross (same plant, higher gain scale → crossing further along the locus).
+    const wHi = 2.2;
+    const Khi = scaleToUnityAt(wHi);
+    const mHi = loopMargins(A, B, Khi, frequencyResponse(A, B, Khi, 240));
+    expect(mHi.gainCrossoverRad!).toBeCloseTo(wHi, 1);
+    const Lhi = loopResponse(A, B, Khi, mHi.gainCrossoverRad!)!;
+    expect(Math.hypot(Lhi.re, Lhi.im)).toBeCloseTo(1, 2);
+    expect(mHi.phaseMarginDeg!).toBeCloseTo(180 + phaseOfG(mHi.gainCrossoverRad!), 0);
+
+    // Phase margin / GM at critical point: |L(j√3)|=1 ⇒ locus through (−180°, 0 dB), GM≈0, ω_pc=√3.
+    const wPc = Math.sqrt(3);
+    const Kpc = scaleToUnityAt(wPc);
+    const mPc = loopMargins(A, B, Kpc, frequencyResponse(A, B, Kpc, 240));
+    expect(mPc.phaseCrossoverRad!).toBeCloseTo(wPc, 1);
+    expect(Math.abs(mPc.gainMarginDb!)).toBeLessThan(0.35);
+    const Lpc = loopResponse(A, B, Kpc, mPc.phaseCrossoverRad!)!;
+    expect(Lpc.re).toBeLessThan(0);
+    expect(Math.abs(Lpc.im)).toBeLessThan(0.05);
+    expect(Math.hypot(Lpc.re, Lpc.im)).toBeCloseTo(1, 2);
+  });
+
   it('keeps Bode/Nyquist/Nichols samples consistent with L(jω)=K(jωI−A)⁻¹B', () => {
     const A = [
       [0, 1],
