@@ -43,7 +43,14 @@ import { runSensitivity } from '../engine/sensitivity';
 import { analyzeStability, logspace, parseVector } from '../engine/stability';
 import { expandGraph, stringifyBlueprint } from '../engine/subsystem';
 import { CONTROLLER_OPTIONS } from '../engine/controllers';
-import { niceBounds, niceTicks, nicholsPhaseSeries, symmetricLimit, wrapNicholsPhase } from '../engine/plotAxes';
+import {
+  niceBounds,
+  niceTicks,
+  nicholsPhaseSeries,
+  resolveAxisBounds,
+  symmetricLimit,
+  wrapNicholsPhase,
+} from '../engine/plotAxes';
 import {
   designDeadbeat,
   designLead,
@@ -87,6 +94,14 @@ describe('plot axes', () => {
     const lim = symmetricLimit([0.5, 0.8, 1.2, 1.1, 50], { floor: 2, ceil: 12, percentile: 0.9, include: [1] });
     expect(lim).toBeGreaterThanOrEqual(2);
     expect(lim).toBeLessThanOrEqual(12);
+    const manual = resolveAxisBounds(
+      { xMin: -2, xMax: 2, yMin: -1, yMax: 1 },
+      { xMin: -5, yMax: 3 }
+    );
+    expect(manual.xMin).toBe(-5);
+    expect(manual.xMax).toBe(2);
+    expect(manual.yMin).toBe(-1);
+    expect(manual.yMax).toBe(3);
   });
 });
 

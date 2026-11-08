@@ -198,3 +198,48 @@ export function nicholsPhaseSeries(
   if (cur.length) segments.push(cur);
   return segments;
 }
+
+/** Axis window in plot-native units (Bode x is log₁₀ ω). */
+export type ChartAxisBounds = {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+};
+
+/** Apply optional manual overrides; keep a tiny span if the user inverts an axis. */
+export function resolveAxisBounds(
+  auto: ChartAxisBounds,
+  override?: Partial<ChartAxisBounds> | null
+): ChartAxisBounds {
+  const pick = (key: keyof ChartAxisBounds) => {
+    const v = override?.[key];
+    return v != null && Number.isFinite(v) ? (v as number) : auto[key];
+  };
+  let xMin = pick('xMin');
+  let xMax = pick('xMax');
+  let yMin = pick('yMin');
+  let yMax = pick('yMax');
+  if (!(xMax > xMin)) {
+    const mid = 0.5 * (xMin + xMax);
+    const pad = Math.max(1e-6, Math.abs(mid) * 0.05 || 0.5);
+    xMin = mid - pad;
+    xMax = mid + pad;
+  }
+  if (!(yMax > yMin)) {
+    const mid = 0.5 * (yMin + yMax);
+    const pad = Math.max(1e-6, Math.abs(mid) * 0.05 || 0.5);
+    yMin = mid - pad;
+    yMax = mid + pad;
+  }
+  return { xMin, xMax, yMin, yMax };
+}
+
+export function boundsApproxEqual(a: ChartAxisBounds, b: ChartAxisBounds, eps = 1e-9): boolean {
+  return (
+    Math.abs(a.xMin - b.xMin) <= eps &&
+    Math.abs(a.xMax - b.xMax) <= eps &&
+    Math.abs(a.yMin - b.yMin) <= eps &&
+    Math.abs(a.yMax - b.yMax) <= eps
+  );
+}

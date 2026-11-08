@@ -1,17 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { McCampaignStats, PercentileBand } from '../engine/mcStats';
 import {
+  ChartAxisBounds,
   formatTick,
   logDecadeTicks,
   niceBounds,
   niceTicks,
   nicholsPhaseSeries,
+  resolveAxisBounds,
   symmetricLimit,
   wrapNicholsPhase,
 } from '../engine/plotAxes';
 import { FreqPoint, RootLocusBranch, StabilityReport } from '../engine/stability';
 
 export type ChartKind = 'bode-mag' | 'bode-phase' | 'nyquist' | 'nichols' | 'poles' | 'rlocus';
+export type { ChartAxisBounds };
 
 type PlotTheme = {
   bg: string;
@@ -295,6 +298,8 @@ export function EnsembleChart({
   compact = true,
   expandable = false,
   onOpen,
+  axisBounds = null,
+  onAutoBounds,
 }: {
   kind: ChartKind;
   title: string;
@@ -311,11 +316,22 @@ export function EnsembleChart({
   compact?: boolean;
   expandable?: boolean;
   onOpen?: () => void;
+  /** Manual axis window in plot-native units (Bode x = log₁₀ ω). */
+  axisBounds?: Partial<ChartAxisBounds> | null;
+  /** Fires with the auto-computed window (before manual overrides). */
+  onAutoBounds?: (bounds: ChartAxisBounds) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glRef = useRef<HTMLCanvasElement>(null);
+  const onAutoBoundsRef = useRef(onAutoBounds);
+  onAutoBoundsRef.current = onAutoBounds;
   const [autoWidth, setAutoWidth] = useState(width ?? 280);
+
+  const publishAuto = (auto: ChartAxisBounds): ChartAxisBounds => {
+    onAutoBoundsRef.current?.(auto);
+    return resolveAxisBounds(auto, axisBounds);
+  };
 
   useEffect(() => {
     if (!fill || width != null) {
@@ -382,21 +398,21 @@ export function EnsembleChart({
           include: focus.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag))),
         }
       );
-      const toX = (re: number) => pad.l + ((re + lim) / (2 * lim)) * (plotW - pad.l - pad.r);
-      const toY = (im: number) => plotH - pad.b - ((im + lim) / (2 * lim)) * (plotH - pad.t - pad.b);
-      const ticks = niceTicks(-lim, lim, 5);
+      const { xMin, xMax, yMin, yMax } = publishAuto({ xMin: -lim, xMax: lim, yMin: -lim, yMax: lim });
+      const toX = (re: number) => pad.l + ((re - xMin) / (xMax - xMin || 1)) * (plotW - pad.l - pad.r);
+      const toY = (im: number) => plotH - pad.b - ((im - yMin) / (yMax - yMin || 1)) * (plotH - pad.t - pad.b);
       drawLinearAxes(ctx, {
         w: plotW,
         h: plotH,
         pad,
-        xMin: -lim,
-        xMax: lim,
-        yMin: -lim,
-        yMax: lim,
+        xMin,
+        xMax,
+        yMin,
+        yMax,
         toX,
         toY,
-        xTicks: ticks,
-        yTicks: ticks,
+        xTicks: niceTicks(xMin, xMax, 5),
+        yTicks: niceTicks(yMin, yMax, 5),
         xUnit: 'Re (1/s)',
         yUnit: 'Im (1/s)',
         color: theme.axis,
@@ -461,10 +477,14 @@ export function EnsembleChart({
         anchors: [0],
         targetTicks: 5,
       });
-      const yMin = yWin.min;
-      const yMax = yWin.max;
-      const xMin = band?.x[0] ?? Math.log10(nom[0]?.w ?? 1e-3);
-      const xMax = band?.x[(band?.x.length ?? 1) - 1] ?? Math.log10(nom[nom.length - 1]?.w ?? 1e3);
+      const autoXMin = band?.x[0] ?? Math.log10(nom[0]?.w ?? 1e-3);
+      const autoXMax = band?.x[(band?.x.length ?? 1) - 1] ?? Math.log10(nom[nom.length - 1]?.w ?? 1e3);
+      const { xMin, xMax, yMin, yMax } = publishAuto({
+        xMin: autoXMin,
+        xMax: autoXMax,
+        yMin: yWin.min,
+        yMax: yWin.max,
+      });
       const toX = (lx: number) => pad.l + ((lx - xMin) / (xMax - xMin || 1)) * (plotW - pad.l - pad.r);
       const toY = (y: number) => pad.t + ((yMax - y) / (yMax - yMin || 1)) * (plotH - pad.t - pad.b);
       if (band) {
@@ -566,13 +586,15 @@ export function EnsembleChart({
         (p) => [p.re, p.im]
       );
       const lim = symmetricLimit(focusVals, { floor: 2, ceil: 12, padFrac: 0.1, percentile: 0.9, include: [1] });
-      const toX = (re: number) => pad.l + ((re + lim) / (2 * lim)) * (plotW - pad.l - pad.r);
-      const toY = (im: number) => plotH - pad.b - ((im + lim) / (2 * lim)) * (plotH - pad.t - pad.b);
-      const ticks = niceTicks(-lim, lim, 5);
+      const { xMin, xMax, yMin, yMax } = publishAuto({ xMin: -lim, xMax: lim, yMin: -lim, yMax: lim });
+      const toX = (re: number) => pad.l + ((re - xMin) / (xMax - xMin || 1)) * (plotW - pad.l - pad.r);
+      const toY = (im: number) => plotH - pad.b - ((im - yMin) / (yMax - yMin || 1)) * (plotH - pad.t - pad.b);
       const alpha = (ensembleFreq?.length ?? 0) > 80 ? 0.1 : 0.35;
+      const padX = 0.02 * (xMax - xMin);
+      const padY = 0.02 * (yMax - yMin);
       const clipSeries = (series: { re: number; im: number }[]) =>
         series
-          .filter((p) => Math.abs(p.re) <= lim * 1.02 && Math.abs(p.im) <= lim * 1.02)
+          .filter((p) => p.re >= xMin - padX && p.re <= xMax + padX && p.im >= yMin - padY && p.im <= yMax + padY)
           .map((p) => ({ x: toX(p.re), y: toY(p.im) }));
       for (const t of ensembleFreq ?? []) {
         strokeSeries(ctx, clipSeries(t.freq), theme.mc, 1, alpha);
@@ -588,14 +610,14 @@ export function EnsembleChart({
         w: plotW,
         h: plotH,
         pad,
-        xMin: -lim,
-        xMax: lim,
-        yMin: -lim,
-        yMax: lim,
+        xMin,
+        xMax,
+        yMin,
+        yMax,
         toX,
         toY,
-        xTicks: ticks,
-        yTicks: ticks,
+        xTicks: niceTicks(xMin, xMax, 5),
+        yTicks: niceTicks(yMin, yMax, 5),
         xUnit: 'Re(L)',
         yUnit: 'Im(L)',
         color: theme.axis,
@@ -627,10 +649,12 @@ export function EnsembleChart({
         Math.max(...wrapped.map((p) => p.magDb)),
         { padFrac: 0.12, minSpan: 20, anchors: [0], targetTicks: 5 }
       );
-      const phMin = phWin.min;
-      const phMax = phWin.max;
-      const magMin = magWin.min;
-      const magMax = magWin.max;
+      const { xMin: phMin, xMax: phMax, yMin: magMin, yMax: magMax } = publishAuto({
+        xMin: phWin.min,
+        xMax: phWin.max,
+        yMin: magWin.min,
+        yMax: magWin.max,
+      });
       const toX = (ph: number) => pad.l + ((ph - phMin) / (phMax - phMin || 1)) * (plotW - pad.l - pad.r);
       const toY = (db: number) => pad.t + ((magMax - db) / (magMax - magMin || 1)) * (plotH - pad.t - pad.b);
       const alpha = (ensembleFreq?.length ?? 0) > 80 ? 0.1 : 0.35;
@@ -674,7 +698,7 @@ export function EnsembleChart({
         crosshair: { x: -180, y: 0 },
       });
     }
-  }, [kind, plotW, plotH, nominal, selected, ensembleFreq, campaign, showAllLines]);
+  }, [kind, plotW, plotH, nominal, selected, ensembleFreq, campaign, showAllLines, axisBounds]);
 
   const interactive = expandable && !!onOpen;
   const stack = (
