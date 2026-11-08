@@ -305,8 +305,18 @@ export function PlotDetailViewer({
                     <strong>{margins.delayMarginSec == null ? '—' : `${margins.delayMarginSec.toFixed(3)} s`}</strong>
                   </li>
                   <li>
-                    <span>ω_gc</span>
+                    <span>ω_gc low</span>
                     <strong>{margins.gainCrossoverRad == null ? '—' : `${margins.gainCrossoverRad.toFixed(2)}`}</strong>
+                  </li>
+                  <li>
+                    <span>ω_gc high</span>
+                    <strong>
+                      {margins.gainCrossoverHighRad == null ? '—' : `${margins.gainCrossoverHighRad.toFixed(2)}`}
+                    </strong>
+                  </li>
+                  <li>
+                    <span>ω_pc</span>
+                    <strong>{margins.phaseCrossoverRad == null ? '—' : `${margins.phaseCrossoverRad.toFixed(2)}`}</strong>
                   </li>
                 </ul>
                 {margins.note ? <p className="hint">{margins.note}</p> : null}

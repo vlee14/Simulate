@@ -631,23 +631,25 @@ export function EnsembleChart({
       const nom = nominal?.freq ?? [];
       const all = [...nom, ...(ensembleFreq ?? []).flatMap((t) => t.freq)];
       if (all.length < 2) return;
-      // Nichols window: wrap phase into [−180°, 180°], frame data tightly.
+      // Nichols: wrap into [−180°, 180°] and frame around the critical point (−180°, 0 dB).
       const wrapped = all.map((p) => ({ phaseDeg: wrapNicholsPhase(p.phaseDeg), magDb: p.magDb }));
+      const critPh = -180;
+      const critMag = 0;
       const phWin = niceBounds(
-        Math.min(...wrapped.map((p) => p.phaseDeg)),
-        Math.max(...wrapped.map((p) => p.phaseDeg)),
+        Math.min(critPh, ...wrapped.map((p) => p.phaseDeg)),
+        Math.max(critPh, ...wrapped.map((p) => p.phaseDeg)),
         {
-          padFrac: 0.08,
-          minSpan: 90,
+          padFrac: 0.12,
+          minSpan: 120,
           anchors: [-180, 0, 180],
           clamp: { min: -180, max: 180 },
           targetTicks: 5,
         }
       );
       const magWin = niceBounds(
-        Math.min(...wrapped.map((p) => p.magDb)),
-        Math.max(...wrapped.map((p) => p.magDb)),
-        { padFrac: 0.12, minSpan: 20, anchors: [0], targetTicks: 5 }
+        Math.min(critMag, ...wrapped.map((p) => p.magDb)),
+        Math.max(critMag, ...wrapped.map((p) => p.magDb)),
+        { padFrac: 0.15, minSpan: 24, anchors: [0], targetTicks: 5 }
       );
       const { xMin: phMin, xMax: phMax, yMin: magMin, yMax: magMax } = publishAuto({
         xMin: phWin.min,
@@ -695,8 +697,27 @@ export function EnsembleChart({
         yUnit: '|L| (dB)',
         color: theme.axis,
         labelColor: theme.label,
-        crosshair: { x: -180, y: 0 },
+        crosshair: { x: critPh, y: critMag },
       });
+      // Mark 0 dB / −180° crossings that define PM (ω_gc) and GM (ω_pc).
+      const margins = (selected?.margins ?? nominal?.margins) ?? null;
+      const mark = (ph: number, db: number, color: string) => {
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(toX(ph), toY(db), 4, 0, Math.PI * 2);
+        ctx.stroke();
+      };
+      if (margins?.phaseMarginDeg != null) {
+        mark(wrapNicholsPhase(margins.phaseMarginDeg - 180), 0, theme.nom);
+      }
+      if (margins?.phaseMarginHighDeg != null) {
+        mark(wrapNicholsPhase(margins.phaseMarginHighDeg - 180), 0, theme.sel);
+      }
+      if (margins?.gainMarginDb != null) {
+        mark(critPh, -margins.gainMarginDb, theme.nom);
+      }
     }
   }, [kind, plotW, plotH, nominal, selected, ensembleFreq, campaign, showAllLines, axisBounds]);
 

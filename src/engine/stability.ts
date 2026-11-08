@@ -41,8 +41,15 @@ export interface PoleMode {
 
 export interface MarginResult {
   gainMarginDb: number | null;
+  /** Phase margin at the low-frequency |L|=1 crossing (Nichols 0 dB cross). */
   phaseMarginDeg: number | null;
+  /** Lowest-frequency gain crossover ω_gc (rad/s). */
   gainCrossoverRad: number | null;
+  /** Highest-frequency gain crossover when distinct from the low one (rad/s). */
+  gainCrossoverHighRad: number | null;
+  /** Phase margin at the high-frequency gain crossover, when distinct. */
+  phaseMarginHighDeg: number | null;
+  /** Phase crossover ω_pc where ∠L = −180° (Nichols vertical through the critical point). */
   phaseCrossoverRad: number | null;
   /** Approximate delay margin = PM / ω_gc (seconds), when both exist. */
   delayMarginSec: number | null;
@@ -320,21 +327,26 @@ function lerpLogFreq(w0: number, w1: number, t: number): number {
   return Math.exp(a + t * (b - a));
 }
 
+function emptyMargins(note: string): MarginResult {
+  return {
+    gainMarginDb: null,
+    phaseMarginDeg: null,
+    gainCrossoverRad: null,
+    gainCrossoverHighRad: null,
+    phaseMarginHighDeg: null,
+    phaseCrossoverRad: null,
+    delayMarginSec: null,
+    note,
+  };
+}
+
 export function loopMargins(A: number[][], B: number[][], K: number[], freq?: FreqPoint[]): MarginResult {
   if (!K.some((v) => Math.abs(v) > 1e-12)) {
-    return {
-      gainMarginDb: null,
-      phaseMarginDeg: null,
-      gainCrossoverRad: null,
-      phaseCrossoverRad: null,
-      delayMarginSec: null,
-      note: 'No feedback gain — margins undefined.',
-    };
+    return emptyMargins('No feedback gain — margins undefined.');
   }
   const points = freq ?? frequencyResponse(A, B, K, 200);
-  // Primary PM at the lowest-frequency |L|=1 crossing; GM at the most critical neg-real crossing.
-  let gainCrossover: number | null = null;
-  let phaseMargin: number | null = null;
+  // Nichols origin (−180°, 0 dB): 0 dB crossings → PM @ ω_gc (low/high); −180° → GM @ ω_pc.
+  const gainCrosses: { w: number; pm: number }[] = [];
   let phaseCrossover: number | null = null;
   let gainMarginDb: number | null = null;
   let prev: FreqPoint | null = null;
@@ -346,12 +358,7 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
         if (t >= 0 && t <= 1) {
           const w = lerpLogFreq(prev.w, p.w, t);
           const ph = prev.phaseDeg + t * (p.phaseDeg - prev.phaseDeg);
-          const pm = 180 + ph;
-          // First (lowest-ω) gain crossover matches classical margin() convention.
-          if (gainCrossover == null || w < gainCrossover) {
-            gainCrossover = w;
-            phaseMargin = pm;
-          }
+          gainCrosses.push({ w, pm: 180 + ph });
         }
       }
       // Phase crossover ≡ crossing the negative real axis (robust to unwrapped phase).
@@ -373,6 +380,15 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
     }
     prev = p;
   }
+
+  gainCrosses.sort((a, b) => a.w - b.w);
+  const low = gainCrosses[0] ?? null;
+  const high = gainCrosses.length > 1 ? gainCrosses[gainCrosses.length - 1]! : null;
+  const gainCrossover = low?.w ?? null;
+  const phaseMargin = low?.pm ?? null;
+  const distinctHigh = high != null && low != null && high.w > low.w * 1.05;
+  const gainCrossoverHigh = distinctHigh ? high!.w : null;
+  const phaseMarginHigh = distinctHigh ? high!.pm : null;
 
   let delayMarginSec: number | null = null;
   if (
@@ -398,6 +414,8 @@ export function loopMargins(A: number[][], B: number[][], K: number[], freq?: Fr
     gainMarginDb,
     phaseMarginDeg: phaseMargin,
     gainCrossoverRad: gainCrossover,
+    gainCrossoverHighRad: gainCrossoverHigh,
+    phaseMarginHighDeg: phaseMarginHigh,
     phaseCrossoverRad: phaseCrossover,
     delayMarginSec,
     note,

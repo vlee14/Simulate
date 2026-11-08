@@ -389,6 +389,8 @@ function sampleToOverlayReport(sample: McRunSample, ws: number[], nominal: Stabi
           gainMarginDb: sample.gainMarginDb,
           phaseMarginDeg: sample.phaseMarginDeg,
           gainCrossoverRad: null as number | null,
+          gainCrossoverHighRad: null as number | null,
+          phaseMarginHighDeg: null as number | null,
           phaseCrossoverRad: null as number | null,
           delayMarginSec: null as number | null,
           note: 'From MC campaign frequency response',
