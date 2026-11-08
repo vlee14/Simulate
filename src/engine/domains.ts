@@ -116,7 +116,7 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     type: 'ode',
     category: 'Dynamics',
     name: 'ODE',
-    description: 'Generic continuous plant. Explicit ẋ = f(x,u,t), or mass-matrix form M(q)q̈ = rhs for multibody models.',
+    description: 'Continuous plant from ODEs or a mass matrix.',
     renderer: 'sim',
     defaultParameters: {
       form: 'explicit',
@@ -635,7 +635,7 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
     type: 'stage',
     category: 'Sinks',
     name: 'Stage',
-    description: 'Generic scene animator. Ports come from `inputs`; drawing comes from a JSON `scene` of boxes, links, disks, tanks, …',
+    description: 'Animated plant view.',
     renderer: 'plant',
     defaultParameters: {
       inputs: 'x:mechanical,th1:mechanical,th2:mechanical,force:mechanical',

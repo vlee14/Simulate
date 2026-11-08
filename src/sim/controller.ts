@@ -133,7 +133,7 @@ export function installSimulation(): void {
       cancelAnimationFrame(raf);
       engine = null;
       useStore.getState().setAnimated(false);
-      useStore.getState().setStatus('idle', 'Diagram changed. Run again to simulate it.');
+      useStore.getState().setStatus('idle', 'Diagram changed — run again.');
     } else if (engine) {
       engine.rebuildParams(graphForSim().nodes);
     }
@@ -466,9 +466,9 @@ function publishDesignView(args: {
 
   const runNote =
     selectedRun > 0
-      ? ` Selected MC run ${selectedRun}.`
+      ? ` Run ${selectedRun}.`
       : uncertain > 0
-        ? ` Monte Carlo campaign ${campaignN} runs (bands + ${overlayN} overlay lines).`
+        ? ` Monte Carlo (${campaignN} runs).`
         : '';
 
   useStore.getState().setDesignView({
@@ -495,7 +495,7 @@ function publishDesignView(args: {
             startedAt: performance.now(),
             etaMs: null,
             rate: null,
-            label: 'Starting workers…',
+            label: 'Starting campaign…',
           }
         : null,
   });
@@ -576,12 +576,12 @@ function publishDesignView(args: {
         mcCampaignProgress: null,
         summary:
           view.summary.replace(/ Monte Carlo campaign .*/, '').replace(/ Selected MC run \d+\.?/, '').trim() +
-          ` Campaign ${result.stats.ok}/${result.stats.total} ok · ${stablePct}% Hurwitz · ${result.stats.backend} · ${result.stats.elapsedMs.toFixed(0)} ms.` +
-          (selectedRun > 0 ? ` Selected MC run ${selectedRun}.` : ''),
+          ` Campaign ${result.stats.ok}/${result.stats.total} · ${stablePct}% stable.` +
+          (selectedRun > 0 ? ` Run ${selectedRun}.` : ''),
       });
       const status = useStore.getState().status;
       const next = status === 'running' || status === 'paused' ? status : 'idle';
-      useStore.getState().setStatus(next, `MC campaign done · ${stablePct}% closed-loop stable`, []);
+      useStore.getState().setStatus(next, `Campaign done · ${stablePct}% stable`, []);
     })
     .catch((error) => {
       if (token !== campaignToken) return;
@@ -608,7 +608,7 @@ export function selectMcRun(run: number): void {
       report: hit,
       open: describePoles(hit.polesOpen),
       closed: describePoles(hit.polesClosed),
-      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').trim(),
+      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/ Run \d+\.?/, '').trim(),
     });
     return;
   }
@@ -621,7 +621,7 @@ export function selectMcRun(run: number): void {
       report: fromOverlay,
       open: describePoles(fromOverlay.polesOpen),
       closed: describePoles(fromOverlay.polesClosed),
-      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/\s*$/, '') + ` Selected MC run ${next}.`,
+      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/ Run \d+\.?/, '').replace(/\s*$/, '') + ` Run ${next}.`,
     });
     return;
   }
@@ -638,7 +638,7 @@ export function selectMcRun(run: number): void {
       mcEnsemble: ensemble,
       open: describePoles(hit.polesOpen),
       closed: describePoles(hit.polesClosed),
-      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/\s*$/, '') + ` Selected MC run ${next}.`,
+      summary: view.summary.replace(/ Selected MC run \d+\.?/, '').replace(/ Run \d+\.?/, '').replace(/\s*$/, '') + ` Run ${next}.`,
     });
     return;
   }
@@ -657,7 +657,7 @@ export function runSelectedMc(): void {
 export function captureLinearizationPoint(source: 'x0' | 'live' = 'x0'): void {
   const plant = findDesignPlant();
   if (!plant) {
-    useStore.getState().setStatus(useStore.getState().status, 'Select a Dynamics plant to capture an operating point.');
+    useStore.getState().setStatus(useStore.getState().status, 'Select a plant.');
     return;
   }
   const n = plantStateDim(plant);
@@ -666,17 +666,17 @@ export function captureLinearizationPoint(source: 'x0' | 'live' = 'x0'): void {
   if (source === 'live') {
     const live = engine?.readState(plant.id) ?? [];
     if (live.length !== n) {
-      useStore.getState().setStatus(useStore.getState().status, 'Run the model to capture a live linearization point.');
+      useStore.getState().setStatus(useStore.getState().status, 'Run the model first.');
       return;
     }
     useStore.getState().setDesignOp({ xOp: formatVector(live), uOp: design.uOp || formatVector(new Array(m).fill(0)) });
     useStore.getState().setDesignOpMode('custom');
-    useStore.getState().setStatus(useStore.getState().status, `Captured live state at t=${(engine?.time ?? 0).toFixed(3)} s`);
+    useStore.getState().setStatus(useStore.getState().status, `Captured live state at t=${(engine?.time ?? 0).toFixed(2)} s`);
     return;
   }
   useStore.getState().setDesignOp({ xOp: formatVector(defaultPlantX0(plant, n)), uOp: design.uOp || '0' });
   useStore.getState().setDesignOpMode('custom');
-  useStore.getState().setStatus(useStore.getState().status, 'Captured plant x₀ into the custom breakpoint.');
+  useStore.getState().setStatus(useStore.getState().status, 'Captured plant x₀.');
 }
 
 /** Analyze open/closed-loop stability about the selected linearization point (uses current k0… gains). */
@@ -684,7 +684,7 @@ export function analyzeController(): void {
   const state = useStore.getState();
   const plant = findDesignPlant();
   if (!plant) {
-    state.setStatus(state.status, 'Select a Dynamics plant (ODE, State-Space, …) to analyze.');
+    state.setStatus(state.status, 'Select a plant to analyze.');
     return;
   }
   try {
@@ -693,7 +693,7 @@ export function analyzeController(): void {
     const B1 = B.map((row) => [row[0] ?? 0]);
     const K = readControllerGains(A.length);
     publishDesignView({
-      summary: `Stability about ${op.label} on “${plant.blockType}” (current controller gains).`,
+      summary: `Stability at ${op.label}.`,
       plant,
       K,
       appliedGains: K.map((value, index) => ({ id: `k${index}`, value: -value })),
@@ -704,7 +704,7 @@ export function analyzeController(): void {
     const report = useStore.getState().designView?.report;
     const status = useStore.getState().status;
     const next = status === 'running' || status === 'paused' ? status : 'idle';
-    useStore.getState().setStatus(next, report?.closedStable ? 'Closed loop looks stable' : 'Closed loop is not Hurwitz', []);
+    useStore.getState().setStatus(next, report?.closedStable ? 'Closed loop is stable' : 'Closed loop is unstable', []);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Stability analysis failed';
     useStore.getState().setDesignView(null);
@@ -806,7 +806,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
   const plant = findDesignPlant();
   const meta = controllerOption(kind);
   if (!plant) {
-    state.setStatus(state.status, 'Select a Dynamics plant (ODE, State-Space, …) to design a controller.');
+    state.setStatus(state.status, 'Select a plant to design.');
     return;
   }
   try {
@@ -827,8 +827,8 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         appliedGains = writeStateFeedbackGains(result.K);
         summary =
           appliedGains.length > 0
-            ? `LQR about ${op.label} — wrote ${appliedGains.length} gain${appliedGains.length === 1 ? '' : 's'} (k0… / kref).`
-            : `LQR about ${op.label}. Add gain blocks with roles k0, k1, … (and optional kref).`;
+            ? `LQR applied (${appliedGains.length} gains).`
+            : 'LQR computed. Add gain blocks k0, k1, …';
         break;
       }
       case 'lqi': {
@@ -836,7 +836,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         K = result.Kx;
         appliedGains = writeStateFeedbackGains(result.Kx);
         writeIntegralGain(result.Ki);
-        summary = `${result.note} About ${op.label}.`;
+        summary = result.note;
         break;
       }
       case 'lqg': {
@@ -845,9 +845,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         appliedGains = writeStateFeedbackGains(result.K);
         const obs = designObserverLqr(A, design.Q, design.R);
         const obsId = writeObserverL(obs.L, false);
-        summary = obsId
-          ? `LQG about ${op.label}: wrote ${appliedGains.length} feedback gains + observer L on “${obsId}”.`
-          : `LQG feedback written (${appliedGains.length} gains). Add an Observer block for L.`;
+        summary = obsId ? `LQG applied (${appliedGains.length} gains + observer).` : `LQG feedback applied. Add an Observer for L.`;
         break;
       }
       case 'poleplace': {
@@ -855,14 +853,14 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         const result = placePolesSiso(A, B1, poles);
         K = result.K;
         appliedGains = writeStateFeedbackGains(result.K);
-        summary = `${result.note} Applied ${appliedGains.length} gain${appliedGains.length === 1 ? '' : 's'}.`;
+        summary = result.note;
         break;
       }
       case 'deadbeat': {
         const result = designDeadbeat(A, B1, design.sampleTime || 0.02);
         K = result.K;
         appliedGains = writeStateFeedbackGains(result.K);
-        summary = `${result.note} Applied ${appliedGains.length} gains.`;
+        summary = result.note;
         break;
       }
       case 'pid-imc':
@@ -885,8 +883,8 @@ export function synthesizeController(kind = useStore.getState().design.controlle
                       lambda: pidLambda ?? design.pidLambda,
                     });
         const id = writePidGains(gains);
-        if (!id) throw new Error('Add a PID block to receive tuned gains.');
-        summary = `${gains.note} Wrote onto PID “${id}”.`;
+        if (!id) throw new Error('Add a PID block.');
+        summary = gains.note;
         K = readControllerGains(plantStateDim(plant));
         appliedGains = [
           { id: `${id}.Kp`, value: gains.Kp },
@@ -908,8 +906,8 @@ export function synthesizeController(kind = useStore.getState().design.controlle
                 ? designHinfLoopShape({ omegaC: design.omegaC || 3, phaseBoostDeg: design.phaseBoostDeg || 50 })
                 : designLead({ omegaC: design.omegaC || 3, phaseBoostDeg: design.phaseBoostDeg || 45 });
         const id = writeTransfer(tf.numerator, tf.denominator);
-        if (!id) throw new Error('Add a Transfer Fcn block to receive the compensator.');
-        summary = `${tf.note} Wrote onto Transfer “${id}”.`;
+        if (!id) throw new Error('Add a Transfer Fcn block.');
+        summary = tf.note;
         K = readControllerGains(plantStateDim(plant));
         appliedGains = [
           { id: `${id}.num`, value: 0 },
@@ -920,8 +918,8 @@ export function synthesizeController(kind = useStore.getState().design.controlle
       case 'observer-lqr': {
         const obs = designObserverLqr(A, design.Q, design.R);
         const id = writeObserverL(obs.L);
-        if (!id) throw new Error('Add an Observer block to receive L.');
-        summary = `${obs.note} Target “${id}”.`;
+        if (!id) throw new Error('Add an Observer block.');
+        summary = obs.note;
         K = readControllerGains(plantStateDim(plant));
         appliedGains = obs.L.map((v, i) => ({ id: `L${i}`, value: v }));
         break;
@@ -931,7 +929,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
     }
 
     publishDesignView({
-      summary: summary || `${meta.label} about ${op.label}.`,
+      summary: summary || `${meta.label} applied.`,
       plant,
       K,
       appliedGains,
@@ -943,7 +941,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
     const next = status === 'running' || status === 'paused' ? status : 'idle';
     useStore.getState().setStatus(next, `${meta.label} applied`, []);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Controller synthesis failed';
+    const message = error instanceof Error ? error.message : 'Synthesis failed';
     useStore.getState().setDesignView(null);
     useStore.getState().setStatus(useStore.getState().status, message);
   }
@@ -954,7 +952,7 @@ export function placeControllerPoles(poleText: string): void {
   const state = useStore.getState();
   const plant = findDesignPlant();
   if (!plant) {
-    state.setStatus(state.status, 'Select a Dynamics plant to place poles.');
+    state.setStatus(state.status, 'Select a plant.');
     return;
   }
   try {
@@ -965,7 +963,7 @@ export function placeControllerPoles(poleText: string): void {
     const result = placePolesSiso(A, B1, poles);
     const appliedGains = writeStateFeedbackGains(result.K);
     publishDesignView({
-      summary: `${result.note} Applied ${appliedGains.length} gain${appliedGains.length === 1 ? '' : 's'}.`,
+      summary: result.note,
       plant,
       K: result.K,
       appliedGains,
@@ -973,7 +971,7 @@ export function placeControllerPoles(poleText: string): void {
       A,
       B: B1,
     });
-    useStore.getState().setStatus('idle', `Pole placement done · ${result.polesClosed.length} closed-loop poles`);
+    useStore.getState().setStatus('idle', 'Pole placement applied');
   } catch (error) {
     useStore.getState().setStatus(useStore.getState().status, error instanceof Error ? error.message : 'Pole placement failed');
   }
@@ -986,11 +984,11 @@ export function tunePid(method: 'imc' | 'zn' = 'imc'): void {
   const graph = graphNow();
   const pid = graph.nodes.find((n) => n.blockType === 'pid');
   if (!plant) {
-    state.setStatus(state.status, 'Select a Dynamics plant to tune against.');
+    state.setStatus(state.status, 'Select a plant.');
     return;
   }
   if (!pid) {
-    state.setStatus(state.status, 'Add a PID block to receive tuned gains.');
+    state.setStatus(state.status, 'Add a PID block.');
     return;
   }
   try {

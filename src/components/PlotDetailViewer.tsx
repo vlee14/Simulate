@@ -81,7 +81,6 @@ export function PlotDetailViewer({
       <div className="plot-detail-sheet">
         <header className="plot-detail-bar">
           <div>
-            <p className="eyebrow">Stability plot</p>
             <h2>{TITLES[kind]}</h2>
           </div>
           <button type="button" className="ghost" onClick={onClose}>
@@ -105,10 +104,10 @@ export function PlotDetailViewer({
               showAllLines={showAllLines}
               hint={
                 campaign?.ok
-                  ? `p05–p95 bands · overlays · black nominal · amber run ${selectedRun || 'nominal'} · ${campaign.ok} runs`
+                  ? `Bands · nominal · run ${selectedRun || 0} · ${campaign.ok} runs`
                   : selectedRun > 0
-                    ? `amber = run ${selectedRun}`
-                    : 'nominal loop response'
+                    ? `Run ${selectedRun}`
+                    : undefined
               }
             />
           </div>
@@ -147,7 +146,7 @@ export function PlotDetailViewer({
                     <strong>{margins.gainCrossoverRad == null ? '—' : `${margins.gainCrossoverRad.toFixed(2)}`}</strong>
                   </li>
                 </ul>
-                <p className="hint">{margins.note}</p>
+                {margins.note ? <p className="hint">{margins.note}</p> : null}
               </section>
             ) : null}
 
@@ -172,7 +171,6 @@ export function PlotDetailViewer({
                     Next
                   </button>
                 </div>
-                <p className="hint">Scrub Monte Carlo draws against the nominal loop.</p>
               </section>
             ) : null}
           </aside>

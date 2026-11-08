@@ -11,10 +11,8 @@ export interface McPlotTrace {
 }
 
 function legendHint(hasMc: boolean, campaign?: McCampaignStats | null): string {
-  if (campaign && campaign.ok > 0) {
-    return `bands · overlays · nominal · selected · ${campaign.backend} ${campaign.ok} runs`;
-  }
-  return hasMc ? 'grey = MC · black = nominal · amber = selected' : 'Tap a plot to inspect';
+  if (campaign && campaign.ok > 0) return `Bands + overlays · ${campaign.ok} runs`;
+  return hasMc ? 'Grey MC · black nominal · amber selected' : '';
 }
 
 export function StabilityPlotGrid({
@@ -53,7 +51,7 @@ export function StabilityPlotGrid({
     <EnsembleChart
       kind={kind}
       title={title}
-      hint={hint}
+      hint={hint || undefined}
       height={height}
       fill
       expandable
