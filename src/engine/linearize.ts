@@ -1,13 +1,14 @@
 import { getBlock } from './blocks';
 import { BlockContext, Param } from './types';
 
-/** Finite-difference linearization of any continuous block about (x0, u0). */
+/** Finite-difference linearization of any continuous block about (x0, u0) at time t. */
 export function linearizeBlock(
   blockType: string,
   parameters: Record<string, Param>,
   x0?: number[],
   u0?: number[],
-  eps = 1e-6
+  eps = 1e-6,
+  t = 0
 ): { A: number[][]; B: number[][] } {
   const def = getBlock(blockType);
   if (!def?.derivatives) throw new Error(`Block "${blockType}" has no continuous dynamics to linearize.`);
@@ -18,6 +19,7 @@ export function linearizeBlock(
   while (z0.length < n) z0.push(0);
   const uBase = u0?.slice(0, m) ?? new Array(m).fill(0);
   while (uBase.length < m) uBase.push(0);
+  const t0 = Number.isFinite(t) ? t : 0;
 
   const evalF = (z: number[], u: number[]) => {
     const state = new Float64Array(z);
@@ -30,7 +32,7 @@ export function linearizeBlock(
     for (const port of ports.outputs) outputs[port.id] = 0;
     const ctx: BlockContext = {
       id: 'linearize',
-      t: 0,
+      t: t0,
       dt: eps,
       inputs,
       outputs,

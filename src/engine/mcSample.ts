@@ -13,6 +13,8 @@ export interface McSampleJob {
   nodes: GraphNode[];
   xOp: number[];
   uOp: number[];
+  /** Analysis time for scheduled plant parameters. */
+  tOp?: number;
   K: number[];
   runStart: number;
   runEnd: number;
@@ -93,7 +95,14 @@ export function sampleMcRange(job: McSampleJob): McRunSample[] {
         if (job.onProgress && (completed % every === 0 || completed === rangeTotal)) job.onProgress(completed, rangeTotal);
         continue;
       }
-      const { A, B } = linearizeBlock(plant.blockType, plant.parameters as Record<string, Param>, job.xOp, job.uOp);
+      const { A, B } = linearizeBlock(
+        plant.blockType,
+        plant.parameters as Record<string, Param>,
+        job.xOp,
+        job.uOp,
+        1e-6,
+        job.tOp ?? 0
+      );
       const B1 = B.map((row) => [row[0] ?? 0]);
       const Acl = closedLoopMatrix(A, B1, job.K);
       const polesClosed = eigenvalues(Acl);

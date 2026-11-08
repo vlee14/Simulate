@@ -459,6 +459,7 @@ export function aircraftDocument(): SimDocument {
       opMode: 'x0',
       xOp: String(plant.x0),
       uOp: String(plant.u0),
+      tOp: 10,
       Q: [2, 4, 2, 0.05, 20, 10, 8, 8, 1, 0.001, 0.0001, 0.0001],
       R: 2,
       controller: 'lqr',
@@ -467,7 +468,7 @@ export function aircraftDocument(): SimDocument {
     nodes: [
       node('note', 'note', 16, 8, {
         text:
-          '6-DoF (H-1391) with paramExprs: ρ=1.225·exp(−h/8500), m=max(900,1110−0.02·t). States [p q r V α β φ θ ψ h xN yE]. Design FD-linearizes at x₀/u₀ (schedules re-evaluated).',
+          '6-DoF (H-1391) with paramExprs: ρ=1.225·exp(−h/8500), m=max(900,1110−0.02·t). Design linearizes at x₀/u₀ with t*=10 s (ask “stable at t=10?”).',
       }),
       node('de', 'constant', 40, 120, { value: de0 }, 'δe trim'),
       node('da', 'constant', 40, 200, { value: 0 }, 'δa'),

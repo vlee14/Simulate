@@ -255,9 +255,15 @@ describe('aircraft 6-DoF (NASA H-1391)', () => {
     expect(viaBlock.A).toHaveLength(12);
     expect(eigenvalues(viaBlock.A).every((e) => Number.isFinite(e.real))).toBe(true);
 
+    // Analysis time t* freezes m(t): A at t=0 differs from A at t=20000 (mass floor).
+    const at0 = linearizeBlock('aircraft', { ...params, x0: trim.x.join(' ') }, trim.x, trim.u, 1e-6, 0);
+    const atBurn = linearizeBlock('aircraft', { ...params, x0: trim.x.join(' ') }, trim.x, trim.u, 1e-6, 20_000);
+    expect(Math.abs((at0.A[3]?.[3] ?? 0) - (atBurn.A[3]?.[3] ?? 0))).toBeGreaterThan(1e-6);
+
     const doc = aircraftDocument();
     const plant = doc.nodes.find((n) => n.blockType === 'aircraft');
-    expect(String(plant?.parameters.paramExprs ?? '')).toContain('rho=');
+    expect(String(plant?.parameters?.paramExprs ?? '')).toContain('rho=');
+    expect(doc.design.tOp).toBe(10);
   });
 });
 

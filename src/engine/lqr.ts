@@ -146,10 +146,11 @@ export function designDynamicsLqr(
   Qdiag: number[],
   R: number,
   x0?: number[],
-  u0?: number[]
+  u0?: number[],
+  t = 0
 ): LqrResult {
   if (blockType === 'statespace') return designStateSpaceLqr(parameters, Qdiag, R);
-  const { A, B } = linearizeBlock(blockType, parameters, x0, u0);
+  const { A, B } = linearizeBlock(blockType, parameters, x0, u0, 1e-6, t);
   if (B[0]?.length !== 1) {
     // Reduce to the first input for the current single-input LQR path.
     const B1 = B.map((row) => [row[0] ?? 0]);

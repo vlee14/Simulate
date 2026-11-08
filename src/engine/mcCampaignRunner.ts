@@ -34,6 +34,8 @@ export interface CampaignRequest {
   nodes: GraphNode[];
   xOp: number[];
   uOp: number[];
+  /** Analysis time for scheduled plant parameters. */
+  tOp?: number;
   K: number[];
   /** Number of MC runs (1…N). */
   nRuns: number;
@@ -207,6 +209,7 @@ export async function runMcCampaign(req: CampaignRequest): Promise<CampaignResul
     nodes: req.nodes,
     xOp: req.xOp,
     uOp: req.uOp,
+    tOp: req.tOp ?? 0,
     K: req.K,
     keepAB: large,
     computeFreq: !large,

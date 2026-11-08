@@ -328,27 +328,68 @@ function defaultPlantX0(plant: GraphNode, n: number): number[] {
   return new Array(n).fill(0);
 }
 
-function resolveOperatingPoint(plant: GraphNode, design: DesignConfig): { x: number[]; u: number[]; label: string } {
+function analysisTime(design: DesignConfig, live = false): number {
+  if (live) return engine?.time ?? 0;
+  const t = Number(design.tOp);
+  return Number.isFinite(t) ? t : 0;
+}
+
+function formatAnalysisTime(t: number): string {
+  if (!Number.isFinite(t)) return '0';
+  const abs = Math.abs(t);
+  if (abs >= 100 || (abs > 0 && abs < 1e-2)) return t.toPrecision(4);
+  return String(Number(t.toFixed(4)));
+}
+
+function resolveOperatingPoint(
+  plant: GraphNode,
+  design: DesignConfig
+): { x: number[]; u: number[]; t: number; label: string } {
   const n = plantStateDim(plant);
   const m = plantInputDim(plant);
   const mode = design.opMode ?? 'equilibrium';
   if (mode === 'equilibrium') {
-    return { x: new Array(n).fill(0), u: new Array(m).fill(0), label: 'equilibrium (0)' };
+    const t = analysisTime(design);
+    return {
+      x: new Array(n).fill(0),
+      u: new Array(m).fill(0),
+      t,
+      label: `equilibrium (0) · t*=${formatAnalysisTime(t)} s`,
+    };
   }
   if (mode === 'x0') {
-    return { x: defaultPlantX0(plant, n), u: parseVector(design.uOp || '0', m, 0), label: 'plant x₀' };
+    const t = analysisTime(design);
+    return {
+      x: defaultPlantX0(plant, n),
+      u: parseVector(design.uOp || '0', m, 0),
+      t,
+      label: `plant x₀ · t*=${formatAnalysisTime(t)} s`,
+    };
   }
   if (mode === 'live') {
+    const t = analysisTime(design, true);
     const live = engine?.readState(plant.id) ?? [];
     if (live.length === n) {
-      return { x: live, u: parseVector(design.uOp || '0', m, 0), label: `live @ t=${(engine?.time ?? 0).toFixed(3)} s` };
+      return {
+        x: live,
+        u: parseVector(design.uOp || '0', m, 0),
+        t,
+        label: `live @ t=${formatAnalysisTime(t)} s`,
+      };
     }
-    return { x: defaultPlantX0(plant, n), u: parseVector(design.uOp || '0', m, 0), label: 'live unavailable — used x₀' };
+    return {
+      x: defaultPlantX0(plant, n),
+      u: parseVector(design.uOp || '0', m, 0),
+      t,
+      label: `live unavailable — used x₀ · t*=${formatAnalysisTime(t)} s`,
+    };
   }
+  const t = analysisTime(design);
   return {
     x: parseVector(design.xOp || '', n, 0),
     u: parseVector(design.uOp || '0', m, 0),
-    label: 'custom breakpoint',
+    t,
+    label: `custom · t*=${formatAnalysisTime(t)} s`,
   };
 }
 
@@ -377,7 +418,7 @@ function linearizePlantRun(
 ): { A: number[][]; B: number[][]; opLabel: string } {
   const drawn = plantNodeForRun(plant.id, run) ?? plant;
   const op = resolveOperatingPoint(drawn, design);
-  const { A, B } = linearizeBlock(drawn.blockType, drawn.parameters, op.x, op.u);
+  const { A, B } = linearizeBlock(drawn.blockType, drawn.parameters, op.x, op.u, 1e-6, op.t);
   const B1 = B.map((row) => [row[0] ?? 0]);
   return { A, B: B1, opLabel: op.label };
 }
@@ -516,6 +557,7 @@ function publishDesignView(args: {
     nodes: graphNow().nodes,
     xOp: op.x,
     uOp: op.u,
+    tOp: op.t,
     K: args.K,
     nRuns: campaignN,
     overlayCount: overlayN,
@@ -671,9 +713,14 @@ export function captureLinearizationPoint(source: 'x0' | 'live' = 'x0'): void {
       useStore.getState().setStatus(useStore.getState().status, 'Run the model first.');
       return;
     }
-    useStore.getState().setDesignOp({ xOp: formatVector(live), uOp: design.uOp || formatVector(new Array(m).fill(0)) });
+    const t = engine?.time ?? 0;
+    useStore.getState().setDesignOp({
+      xOp: formatVector(live),
+      uOp: design.uOp || formatVector(new Array(m).fill(0)),
+      tOp: t,
+    });
     useStore.getState().setDesignOpMode('custom');
-    useStore.getState().setStatus(useStore.getState().status, `Captured live state at t=${(engine?.time ?? 0).toFixed(2)} s`);
+    useStore.getState().setStatus(useStore.getState().status, `Captured live state at t=${t.toFixed(2)} s`);
     return;
   }
   useStore.getState().setDesignOp({ xOp: formatVector(defaultPlantX0(plant, n)), uOp: design.uOp || '0' });
@@ -691,7 +738,7 @@ export function analyzeController(): void {
   }
   try {
     const op = resolveOperatingPoint(plant, state.design);
-    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
+    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u, 1e-6, op.t);
     const B1 = B.map((row) => [row[0] ?? 0]);
     const K = readControllerGains(A.length);
     publishDesignView({
@@ -814,17 +861,18 @@ export function synthesizeController(kind = useStore.getState().design.controlle
   try {
     const design = state.design;
     const op = resolveOperatingPoint(plant, design);
-    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
+    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u, 1e-6, op.t);
     const B1 = B.map((row) => [row[0] ?? 0]);
     let summary = '';
     let K: number[] = [];
     let appliedGains: { id: string; value: number }[] = [];
 
     const pidLambda = design.pidLambda > 0 ? design.pidLambda : undefined;
+    const tuneOp = { x0: op.x, u0: op.u, t: op.t };
 
     switch (kind) {
       case 'lqr': {
-        const result = designDynamicsLqr(plant.blockType, plant.parameters, design.Q, design.R, op.x, op.u);
+        const result = designDynamicsLqr(plant.blockType, plant.parameters, design.Q, design.R, op.x, op.u, op.t);
         K = result.K;
         appliedGains = writeStateFeedbackGains(result.K);
         summary =
@@ -842,7 +890,7 @@ export function synthesizeController(kind = useStore.getState().design.controlle
         break;
       }
       case 'lqg': {
-        const result = designDynamicsLqr(plant.blockType, plant.parameters, design.Q, design.R, op.x, op.u);
+        const result = designDynamicsLqr(plant.blockType, plant.parameters, design.Q, design.R, op.x, op.u, op.t);
         K = result.K;
         appliedGains = writeStateFeedbackGains(result.K);
         const obs = designObserverLqr(A, design.Q, design.R);
@@ -872,16 +920,15 @@ export function synthesizeController(kind = useStore.getState().design.controlle
       case 'p': {
         const gains =
           kind === 'pid-zn'
-            ? tunePidZn(plant.blockType, plant.parameters, { x0: op.x, u0: op.u })
+            ? tunePidZn(plant.blockType, plant.parameters, tuneOp)
             : kind === 'pi-imc'
-              ? tunePiImc(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, lambda: pidLambda ?? design.pidLambda })
+              ? tunePiImc(plant.blockType, plant.parameters, { ...tuneOp, lambda: pidLambda ?? design.pidLambda })
               : kind === 'pd'
-                ? tunePd(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, lambda: pidLambda ?? design.pidLambda })
+                ? tunePd(plant.blockType, plant.parameters, { ...tuneOp, lambda: pidLambda ?? design.pidLambda })
                 : kind === 'p'
-                  ? tuneP(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, lambda: pidLambda ?? design.pidLambda })
+                  ? tuneP(plant.blockType, plant.parameters, { ...tuneOp, lambda: pidLambda ?? design.pidLambda })
                   : tunePidImc(plant.blockType, plant.parameters, {
-                      x0: op.x,
-                      u0: op.u,
+                      ...tuneOp,
                       lambda: pidLambda ?? design.pidLambda,
                     });
         const id = writePidGains(gains);
@@ -960,7 +1007,7 @@ export function placeControllerPoles(poleText: string): void {
   try {
     const poles = parsePoleList(poleText);
     const op = resolveOperatingPoint(plant, state.design);
-    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u);
+    const { A, B } = linearizeBlock(plant.blockType, plant.parameters, op.x, op.u, 1e-6, op.t);
     const B1 = B.map((row) => [row[0] ?? 0]);
     const result = placePolesSiso(A, B1, poles);
     const appliedGains = writeStateFeedbackGains(result.K);
@@ -997,8 +1044,8 @@ export function tunePid(method: 'imc' | 'zn' = 'imc'): void {
     const op = resolveOperatingPoint(plant, state.design);
     const gains =
       method === 'zn'
-        ? tunePidZn(plant.blockType, plant.parameters, { x0: op.x, u0: op.u })
-        : tunePidImc(plant.blockType, plant.parameters, { x0: op.x, u0: op.u });
+        ? tunePidZn(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, t: op.t })
+        : tunePidImc(plant.blockType, plant.parameters, { x0: op.x, u0: op.u, t: op.t });
     state.checkpoint();
     state.updateParam(pid.id, 'Kp', gains.Kp);
     state.updateParam(pid.id, 'Ki', gains.Ki);

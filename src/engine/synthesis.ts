@@ -193,12 +193,14 @@ function charPolyCoeffs(A: number[][]): number[] {
  * IMC / lambda-tuned PID for a plant linearized about an operating point.
  * Fits a second-order or FOPDT-ish response from A,B,C and returns parallel PID gains.
  */
+type TuneOp = { x0?: number[]; u0?: number[]; t?: number; lambda?: number };
+
 export function tunePidImc(
   blockType: string,
   parameters: Record<string, Param>,
-  opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
+  opts: TuneOp = {}
 ): PidGains {
-  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0);
+  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0, 1e-6, opts.t ?? 0);
   const B1 = B.map((row) => [row[0] ?? 0]);
   // DC gain of C(sI−A)^{-1}B with C=[1 0 …] (first state as output proxy)
   const n = A.length;
@@ -235,9 +237,9 @@ export function tunePidImc(
 export function tunePidZn(
   blockType: string,
   parameters: Record<string, Param>,
-  opts: { x0?: number[]; u0?: number[] } = {}
+  opts: TuneOp = {}
 ): PidGains {
-  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0);
+  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0, 1e-6, opts.t ?? 0);
   const n = A.length;
   const C = new Array(n).fill(0);
   C[0] = 1;
@@ -316,7 +318,7 @@ function plantDcAndTau(
 export function tunePiImc(
   blockType: string,
   parameters: Record<string, Param>,
-  opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
+  opts: TuneOp = {}
 ): PidGains {
   const full = tunePidImc(blockType, parameters, opts);
   return { ...full, Kd: 0, note: full.note.replace('PID', 'PI') };
@@ -326,9 +328,9 @@ export function tunePiImc(
 export function tunePd(
   blockType: string,
   parameters: Record<string, Param>,
-  opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
+  opts: TuneOp = {}
 ): PidGains {
-  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0);
+  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0, 1e-6, opts.t ?? 0);
   const B1 = B.map((row) => [row[0] ?? 0]);
   const { Kdc, tau } = plantDcAndTau(A, B1);
   const lambda = Math.max(opts.lambda ?? 0.25 * tau, 0.05 * tau, 1e-3);
@@ -347,9 +349,9 @@ export function tunePd(
 export function tuneP(
   blockType: string,
   parameters: Record<string, Param>,
-  opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
+  opts: TuneOp = {}
 ): PidGains {
-  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0);
+  const { A, B } = linearizeBlock(blockType, parameters, opts.x0, opts.u0, 1e-6, opts.t ?? 0);
   const B1 = B.map((row) => [row[0] ?? 0]);
   const { Kdc, tau } = plantDcAndTau(A, B1);
   const lambda = Math.max(opts.lambda ?? 0.4 * tau, 0.05 * tau, 1e-3);

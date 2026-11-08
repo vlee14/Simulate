@@ -51,6 +51,7 @@ export const DEFAULT_DESIGN: DesignConfig = {
   opMode: 'equilibrium',
   xOp: '',
   uOp: '0',
+  tOp: 0,
   analysis: ['poles', 'ctrb', 'damping', 'margins', 'polemap', 'bode', 'nyquist', 'nichols', 'rlocus'],
   controller: 'lqr',
   poles: '-2 -3 -4 -5',

@@ -66,7 +66,7 @@ interface AppState {
   setDesignWeight: (index: number, value: number) => void;
   setDesignR: (value: number) => void;
   setDesignOpMode: (mode: LinearizationPoint) => void;
-  setDesignOp: (patch: { xOp?: string; uOp?: string }) => void;
+  setDesignOp: (patch: { xOp?: string; uOp?: string; tOp?: number }) => void;
   setDesignAnalysis: (option: AnalysisOption, enabled: boolean) => void;
   setDesignController: (patch: Partial<DesignConfig>) => void;
   setDesignView: (view: DesignView | null) => void;
@@ -255,6 +255,7 @@ export const useStore = create<AppState>((set, get) => ({
         ...state.design,
         xOp: patch.xOp ?? state.design.xOp,
         uOp: patch.uOp ?? state.design.uOp,
+        tOp: patch.tOp !== undefined && Number.isFinite(patch.tOp) ? patch.tOp : state.design.tOp,
       },
       dirty: true,
     })),

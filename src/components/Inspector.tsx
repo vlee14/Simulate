@@ -599,6 +599,13 @@ function DesignPane() {
               <span>u* (input)</span>
               <input value={design.uOp} placeholder="0" onChange={(event) => setDesignOp({ uOp: event.target.value })} />
             </label>
+            <NumberField
+              label="t* (time, s)"
+              help="Freeze time-varying plant params at this instant (e.g. stable at t=10 s?). Live mode uses the simulator clock instead."
+              value={design.tOp ?? 0}
+              step={0.1}
+              onCommit={(value) => setDesignOp({ tOp: Math.max(0, value) })}
+            />
             <div className="design-actions">
               <button type="button" className="ghost" onClick={() => captureLinearizationPoint('x0')}>
                 Capture x₀
