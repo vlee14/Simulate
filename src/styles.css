@@ -976,6 +976,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 8px;
   align-items: end;
 }
+.plot-bounds-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+.plot-bounds-grid.is-auto input {
+  color: var(--muted);
+}
+.plot-bounds-reset {
+  margin-top: 8px;
+  width: 100%;
+}
 @media (min-width: 1041px) {
   .plot-detail {
     place-items: center;

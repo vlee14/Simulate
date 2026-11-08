@@ -43,7 +43,14 @@ import { runSensitivity } from '../engine/sensitivity';
 import { analyzeStability, logspace, parseVector } from '../engine/stability';
 import { expandGraph, stringifyBlueprint } from '../engine/subsystem';
 import { CONTROLLER_OPTIONS } from '../engine/controllers';
-import { niceTicks, nicholsPhaseSeries, wrapNicholsPhase } from '../engine/plotAxes';
+import {
+  niceBounds,
+  niceTicks,
+  nicholsPhaseSeries,
+  resolveAxisBounds,
+  symmetricLimit,
+  wrapNicholsPhase,
+} from '../engine/plotAxes';
 import {
   designDeadbeat,
   designLead,
@@ -68,6 +75,33 @@ describe('plot axes', () => {
       { phaseDeg: -170, magDb: -2 },
     ]);
     expect(segs.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('picks padded nice bounds and robust complex limits', () => {
+    const bode = niceBounds(-3, 12, { padFrac: 0.1, minSpan: 10, anchors: [0] });
+    expect(bode.min).toBeLessThanOrEqual(-3);
+    expect(bode.max).toBeGreaterThanOrEqual(12);
+    expect(bode.min).toBeLessThanOrEqual(0);
+    const nichols = niceBounds(-120, -40, {
+      padFrac: 0.08,
+      minSpan: 90,
+      anchors: [-180, 0, 180],
+      clamp: { min: -180, max: 180 },
+    });
+    expect(nichols.min).toBeGreaterThanOrEqual(-180);
+    expect(nichols.max).toBeLessThanOrEqual(180);
+    expect(nichols.max - nichols.min).toBeGreaterThanOrEqual(90);
+    const lim = symmetricLimit([0.5, 0.8, 1.2, 1.1, 50], { floor: 2, ceil: 12, percentile: 0.9, include: [1] });
+    expect(lim).toBeGreaterThanOrEqual(2);
+    expect(lim).toBeLessThanOrEqual(12);
+    const manual = resolveAxisBounds(
+      { xMin: -2, xMax: 2, yMin: -1, yMax: 1 },
+      { xMin: -5, yMax: 3 }
+    );
+    expect(manual.xMin).toBe(-5);
+    expect(manual.xMax).toBe(2);
+    expect(manual.yMin).toBe(-1);
+    expect(manual.yMax).toBe(3);
   });
 });
 
