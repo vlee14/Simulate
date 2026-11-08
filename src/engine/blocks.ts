@@ -1,6 +1,6 @@
-import { DOMAIN_BLOCKS, domainSummary } from './domains';
+import { DOMAIN_BLOCKS } from './domains';
 import { compileExpression, expressionInputCount } from './expr';
-import { IO_BLOCKS, ioSummary } from './io';
+import { IO_BLOCKS } from './io';
 import { zeros } from './linalg';
 import { BlockContext, BlockDefinition, Param, ParamSpec, PortDef } from './types';
 
@@ -1269,81 +1269,6 @@ export function libraryGroups(): { category: string; blocks: BlockDefinition[] }
     category,
     blocks: BLOCKS.filter((block) => block.category === category),
   }));
-}
-
-export function blockSummary(def: BlockDefinition, parameters: Record<string, Param>): string {
-  switch (def.type) {
-    case 'gain':
-      return formatCompact(num(parameters, 'k', 1));
-    case 'constant':
-    case 'manual':
-      return formatCompact(num(parameters, 'value', 0));
-    case 'sum':
-      return signsOf(parameters)
-        .split('')
-        .map((s) => (s === '-' ? '−' : '+'))
-        .join(' ');
-    case 'product':
-      return opsOf(parameters).split('').join(' ');
-    case 'bias':
-      return formatCompact(num(parameters, 'bias', 0));
-    case 'math':
-      return text(parameters, 'fn', 'sin');
-    case 'fcn':
-      return text(parameters, 'expr', 'u');
-    case 'pronav':
-      return `N ${formatCompact(num(parameters, 'N', 3))}`;
-    case 'integrator':
-      return `x₀ ${formatCompact(num(parameters, 'initialCondition', 0))}`;
-    case 'pid':
-      return `${formatCompact(num(parameters, 'Kp', 0))}  ${formatCompact(num(parameters, 'Ki', 0))}  ${formatCompact(num(parameters, 'Kd', 0))}`;
-    case 'observer':
-      return 'Luenberger';
-    case 'kalman':
-      return `Ts ${formatCompact(num(parameters, 'sampleTime', 0.02))}`;
-    case 'transfer':
-      return text(parameters, 'denominator', '');
-    case 'sine':
-      return `${formatCompact(num(parameters, 'frequency', 0))} Hz`;
-    case 'saturation':
-      return `${formatCompact(num(parameters, 'lowerLimit', 0))}…${formatCompact(num(parameters, 'upperLimit', 0))}`;
-    case 'step':
-      return formatCompact(num(parameters, 'finalValue', 1));
-    case 'pulse':
-      return formatCompact(num(parameters, 'amplitude', 1));
-    case 'secondorder':
-    case 'ode':
-    case 'mass':
-    case 'inertia':
-    case 'spring':
-    case 'damper':
-    case 'dcmotor':
-    case 'rlc':
-    case 'pneumatic_tank':
-    case 'pneumatic_valve':
-    case 'hydraulic_chamber':
-    case 'thermal_mass':
-    case 'conduction':
-      return domainSummary(def.type, parameters);
-    case 'sensor':
-    case 'encoder':
-    case 'actuator':
-    case 'inport':
-    case 'outport':
-    case 'subsystem':
-      return ioSummary(def.type, parameters);
-    case 'stage': {
-      const trail = text(parameters, 'trail', '');
-      const ports = text(parameters, 'inputs', '')
-        .split(',')
-        .map((part) => part.trim().split(':')[0])
-        .filter(Boolean);
-      if (trail) return `trail ${trail}`;
-      return ports.length ? ports.slice(0, 3).join(',') : 'scene';
-    }
-    default:
-      return '';
-  }
 }
 
 /** Parse state-space matrices from block parameters. */

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
@@ -31,5 +32,9 @@ export default defineConfig({
   plugins: [react(), pagesFallback()],
   server: {
     port: 5173,
+  },
+  test: {
+    include: ['src/**/*.test.ts'],
+    environment: 'node',
   },
 });

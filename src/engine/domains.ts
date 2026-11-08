@@ -725,35 +725,3 @@ export const DOMAIN_BLOCKS: BlockDefinition[] = [
   },
 ];
 
-export function domainSummary(type: string, parameters: Record<string, Param>): string {
-  switch (type) {
-    case 'ode':
-      return text(parameters, 'form', 'explicit') === 'mass' ? `nq ${Math.round(num(parameters, 'nq', 2))}` : `nx ${Math.round(num(parameters, 'nx', 2))}`;
-    case 'secondorder':
-      return `ωn ${num(parameters, 'wn', 1)}`;
-    case 'mass':
-      return `m ${num(parameters, 'm', 1)}`;
-    case 'inertia':
-      return `J ${num(parameters, 'J', 0.05)}`;
-    case 'spring':
-      return `k ${num(parameters, 'k', 1)}`;
-    case 'damper':
-      return `c ${num(parameters, 'c', 0.2)}`;
-    case 'dcmotor':
-      return 'DC';
-    case 'rlc':
-      return 'RLC';
-    case 'pneumatic_tank':
-      return 'tank';
-    case 'pneumatic_valve':
-      return 'valve';
-    case 'hydraulic_chamber':
-      return 'chamber';
-    case 'thermal_mass':
-      return 'C';
-    case 'conduction':
-      return `G ${num(parameters, 'G', 10)}`;
-    default:
-      return '';
-  }
-}

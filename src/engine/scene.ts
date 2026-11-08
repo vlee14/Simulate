@@ -107,7 +107,7 @@ function parseReadouts(raw: string): { label: string; port: string; format: 'num
 }
 
 /** `label|blockId|min|max` or `label|blockId|min|max|hold` (hold = no spring). */
-export function parseControl(raw: string): StageControl | null {
+function parseControl(raw: string): StageControl | null {
   const text = raw.trim();
   if (!text) return null;
   const [label, block, minText, maxText, mode] = text.split('|').map((s) => s.trim());
@@ -127,7 +127,7 @@ export function parseControl(raw: string): StageControl | null {
  * `label|pulse|blockId|amplitude` or `label|nudge|stateIndex|amount`
  * (legacy shorthand `label|amplitude` → pulse on block `pulse`).
  */
-export function parseDisturbance(raw: string): StageDisturbance[] {
+function parseDisturbance(raw: string): StageDisturbance[] {
   const out: StageDisturbance[] = [];
   for (const part of raw.split(/[;\n]+/)) {
     const text = part.trim();
@@ -159,7 +159,7 @@ export function parseDisturbance(raw: string): StageDisturbance[] {
 }
 
 /** `elementId|nudge|index|amount` or `*|control` for canvas drag → control source. */
-export function parseInteract(raw: string): StageInteract[] {
+function parseInteract(raw: string): StageInteract[] {
   const out: StageInteract[] = [];
   for (const part of raw.split(/[;\n]+/)) {
     const text = part.trim();
@@ -182,7 +182,7 @@ export function parseInteract(raw: string): StageInteract[] {
   return out;
 }
 
-export function parseScene(raw: string): SceneElement[] {
+function parseScene(raw: string): SceneElement[] {
   const text = raw.trim();
   if (!text) return [];
   try {
@@ -248,13 +248,11 @@ interface Pose {
   radius?: number;
 }
 
-export interface StageHitTarget {
+interface StageHitTarget {
   id: string;
   kind: string;
-  /** World-space center / tip used for hit tests. */
   x: number;
   y: number;
-  /** Optional segment for links. */
   x0?: number;
   y0?: number;
   radius: number;
@@ -331,13 +329,11 @@ export interface StageCamera {
   originY: number;
 }
 
-/** True when the scene uses world-space geometry that should be framed. */
-export function stageUsesWorldCamera(config: StageConfig): boolean {
+function stageUsesWorldCamera(config: StageConfig): boolean {
   return config.elements.some((element) => element.type === 'box' || element.type === 'disk' || element.type === 'link');
 }
 
-/** True when stage subjects are flying (not ground-contact carts). */
-export function stageIsAirborne(config: StageConfig, signals: Record<string, number>): boolean {
+function stageIsAirborne(config: StageConfig, signals: Record<string, number>): boolean {
   return config.elements.some((element) => {
     if (element.type !== 'box' && element.type !== 'disk') return false;
     const y = resolveRef(element.y, signals, element.type === 'disk' ? 0.4 : 0);
@@ -472,11 +468,8 @@ export function fitStageCamera(
   return settleStageCamera(previous, next);
 }
 
-/**
- * Soft-follow with snap on large jumps (demo switch / teleport) so framing
- * does not linger on a previous scene's look point.
- */
-export function settleStageCamera(previous: StageCamera | null | undefined, next: StageCamera, alpha = 0.28): StageCamera {
+/** Soft-follow with snap on large jumps (demo switch / teleport). */
+function settleStageCamera(previous: StageCamera | null | undefined, next: StageCamera, alpha = 0.28): StageCamera {
   if (!previous) return next;
   const jump =
     Math.hypot(next.lookX - previous.lookX, next.lookY - previous.lookY) > 2.5 ||
@@ -490,11 +483,6 @@ export function settleStageCamera(previous: StageCamera | null | undefined, next
     originX: next.originX,
     originY: next.originY,
   };
-}
-
-/** @deprecated Use settleStageCamera. */
-export function smoothStageCamera(previous: StageCamera | null | undefined, next: StageCamera, alpha = 0.28): StageCamera {
-  return settleStageCamera(previous, next, alpha);
 }
 
 export function canvasToWorld(camera: StageCamera, px: number, py: number): { x: number; y: number } {
@@ -511,8 +499,7 @@ export function worldToCanvas(camera: StageCamera, wx: number, wy: number): { x:
   };
 }
 
-/** Hit targets for pointer interactions (world units). */
-export function stageHitTargets(config: StageConfig, signals: Record<string, number>): StageHitTarget[] {
+function stageHitTargets(config: StageConfig, signals: Record<string, number>): StageHitTarget[] {
   const poses = collectPoses(config, signals);
   const targets: StageHitTarget[] = [];
   for (const [id, pose] of poses) {
