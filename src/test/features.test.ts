@@ -40,7 +40,16 @@ import {
   worldToCanvas,
 } from '../engine/scene';
 import { runSensitivity } from '../engine/sensitivity';
-import { analyzeStability, logspace, parseVector } from '../engine/stability';
+import {
+  analyzeStability,
+  closedLoopMatrix,
+  frequencyResponse,
+  logspace,
+  loopMargins,
+  loopResponse,
+  parseVector,
+  rootLocus,
+} from '../engine/stability';
 import { expandGraph, stringifyBlueprint } from '../engine/subsystem';
 import { CONTROLLER_OPTIONS } from '../engine/controllers';
 import {
@@ -204,18 +213,110 @@ describe('dynamics + LQR + stability', () => {
   });
 
   it('always attaches conclusions and margins, including delay margin when PM/ω_gc exist', () => {
-    // Stable 1st-order plant ẋ = −x + u with K = 2 → L(s)=2/(s+1), ω_gc=√3, PM=60°.
+    // L(s)=2/(s+1) → ω_gc=√3, PM=120°, GM undefined (no −180° cross).
     const A = [[-1]];
     const B = [[1]];
     const K = [2];
     const report = analyzeStability(A, B, K, ['poles']);
     expect(report.conclusions.closedLoop).toBe('stable');
     expect(report.margins).not.toBeNull();
-    expect(report.margins!.phaseMarginDeg).toBeGreaterThan(45);
-    expect(report.margins!.gainCrossoverRad).toBeGreaterThan(1);
-    expect(report.margins!.delayMarginSec).toBeGreaterThan(0);
+    expect(report.margins!.phaseMarginDeg!).toBeCloseTo(120, 0);
+    expect(report.margins!.gainCrossoverRad!).toBeCloseTo(Math.sqrt(3), 1);
+    expect(report.margins!.gainMarginDb).toBeNull();
+    expect(report.margins!.delayMarginSec!).toBeCloseTo(((120 * Math.PI) / 180) / Math.sqrt(3), 1);
     expect(report.conclusions.margins).toBe('adequate');
     expect(report.conclusions.bullets.some((b) => /margin/i.test(b))).toBe(true);
+  });
+});
+
+describe('stability analysis correctness', () => {
+  it('matches analytical GM/PM for L=4/(s+1)^3 and skips delay margin when PM≤0', () => {
+    // Companion form of 1/(s+1)^3; K=[4,0,0] → L=4/(s+1)^3.
+    // Phase −180° at ω=√3 with |L|=1/2 → GM=6 dB.
+    const A = [
+      [0, 1, 0],
+      [0, 0, 1],
+      [-1, -3, -3],
+    ];
+    const B = [[0], [0], [1]];
+    const K = [4, 0, 0];
+    const m = loopMargins(A, B, K);
+    expect(m.phaseCrossoverRad!).toBeCloseTo(Math.sqrt(3), 1);
+    expect(m.gainMarginDb!).toBeCloseTo(6.02, 0);
+    const wgc = Math.sqrt(Math.pow(4, 2 / 3) - 1);
+    const pm = 180 - (3 * Math.atan(wgc) * 180) / Math.PI;
+    expect(m.gainCrossoverRad!).toBeCloseTo(wgc, 1);
+    expect(m.phaseMarginDeg!).toBeCloseTo(pm, 0);
+
+    const bad = loopMargins(A, B, [40, 0, 0]);
+    expect(bad.phaseMarginDeg!).toBeLessThan(0);
+    expect(bad.delayMarginSec).toBeNull();
+  });
+
+  it('keeps Bode/Nyquist/Nichols samples consistent with L(jω)=K(jωI−A)⁻¹B', () => {
+    const A = [
+      [0, 1],
+      [0, -1],
+    ];
+    const B = [[0], [1]];
+    const K = [1, 0]; // L=1/(s(s+1))
+    const freq = frequencyResponse(A, B, K, 80);
+    expect(freq.length).toBeGreaterThan(40);
+    for (const p of freq) {
+      const L = loopResponse(A, B, K, p.w)!;
+      expect(p.re).toBeCloseTo(L.re, 8);
+      expect(p.im).toBeCloseTo(L.im, 8);
+      expect(p.mag).toBeCloseTo(Math.hypot(L.re, L.im), 8);
+      expect(p.magDb).toBeCloseTo(20 * Math.log10(Math.max(p.mag, 1e-16)), 4);
+      // Unwrapped phase stays within 180° of principal arg.
+      let principal = (Math.atan2(L.im, L.re) * 180) / Math.PI;
+      while (principal - p.phaseDeg > 180) principal -= 360;
+      while (principal - p.phaseDeg < -180) principal += 360;
+      expect(Math.abs(principal - p.phaseDeg)).toBeLessThan(1e-6);
+    }
+    const m = loopMargins(A, B, K, freq);
+    // |L|=1 ⇒ ω√(ω²+1)=1 ⇒ ω²=(-1+√5)/2, PM=90°+atan(ω) complement → ≈51.83°.
+    const w = Math.sqrt((-1 + Math.sqrt(5)) / 2);
+    expect(m.gainCrossoverRad!).toBeCloseTo(w, 2);
+    expect(m.phaseMarginDeg!).toBeCloseTo(180 - 90 - (Math.atan(w) * 180) / Math.PI, 0);
+    expect(m.gainMarginDb).toBeNull();
+  });
+
+  it('reports open/closed poles, damping, controllability, and root locus at ρ=1', () => {
+    const A = [
+      [0, 1],
+      [-2, -0.4],
+    ];
+    const B = [[0], [1]];
+    const K = [0.5, 0.2];
+    const report = analyzeStability(A, B, K, ['poles', 'ctrb', 'damping', 'rlocus', 'margins']);
+    const open = eigenvalues(A);
+    const closed = eigenvalues(closedLoopMatrix(A, B, K));
+    expect(report.polesOpen).toHaveLength(2);
+    expect(report.polesClosed).toHaveLength(2);
+    for (const p of open) {
+      expect(Math.min(...report.polesOpen.map((q) => Math.hypot(q.real - p.real, q.imag - p.imag)))).toBeLessThan(1e-6);
+    }
+    for (const p of closed) {
+      expect(Math.min(...report.polesClosed.map((q) => Math.hypot(q.real - p.real, q.imag - p.imag)))).toBeLessThan(1e-6);
+    }
+    expect(report.closedStable).toBe(closed.every((e) => e.real < 0));
+    expect(report.controllable).toBe(true);
+    expect(report.controllabilityRank).toBe(2);
+    expect(report.modes.length).toBeGreaterThanOrEqual(1);
+    const osc = report.modes.find((m) => m.imag > 0);
+    if (osc) {
+      expect(osc.wn).toBeCloseTo(Math.hypot(osc.real, osc.imag), 8);
+      expect(osc.zeta).toBeCloseTo(-osc.real / osc.wn, 8);
+    }
+    const locus = rootLocus(A, B, K, 24, 1);
+    const atOne = locus.map((b) => b.points[b.points.length - 1]);
+    for (const p of closed) {
+      const d = Math.min(...atOne.map((q) => Math.hypot(q.real - p.real, q.imag - p.imag)));
+      expect(d).toBeLessThan(0.05);
+    }
+    expect(report.freq.length).toBeGreaterThan(0);
+    expect(report.margins).toBeTruthy();
   });
 });
 
