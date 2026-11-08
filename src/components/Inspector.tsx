@@ -517,190 +517,213 @@ function DesignPane() {
   const campaignSize = config.mcCampaignSize ?? 1000;
   const overlayCount = config.mcOverlayCount ?? 96;
   const showAllLines = !!config.mcShowAllLines;
+  const [section, setSection] = useState<'setup' | 'results'>(view?.report ? 'results' : 'setup');
+
+  useEffect(() => {
+    if (view?.report) setSection('results');
+  }, [view?.report]);
+
+  const runAnalyze = () => {
+    analyzeController();
+    setSection('results');
+  };
+  const runLqr = () => {
+    computeLqr();
+    setSection('results');
+  };
 
   return (
-    <div className="pane">
-      <h2>Control design</h2>
-      <p className="lede">
-        Pick a linearization / breakpoint, choose stability reports, then analyze the current controller or compute LQR onto gain roles k0… / kref.
-      </p>
+    <div className="pane design-pane">
+      <header className="pane-hero">
+        <p className="eyebrow">Control design</p>
+        <h2>Analyze & tune</h2>
+        <p className="lede">Linearize at a breakpoint, inspect margins and plots, then apply LQR gains.</p>
+      </header>
 
-      <h3>Monte Carlo campaign</h3>
-      <NumberField
-        label={`Campaign size (1…${MC_CAMPAIGN_MAX})`}
-        value={campaignSize}
-        step={100}
-        onCommit={(value) => setConfig({ mcCampaignSize: Math.min(MC_CAMPAIGN_MAX, Math.max(0, Math.round(value))) })}
-      />
-      <NumberField
-        label={`Overlay lines (≤${MC_OVERLAY_MAX})`}
-        value={overlayCount}
-        step={16}
-        onCommit={(value) => setConfig({ mcOverlayCount: Math.min(MC_OVERLAY_MAX, Math.max(0, Math.round(value))) })}
-      />
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={showAllLines}
-          onChange={(event) => setConfig({ mcShowAllLines: event.target.checked })}
-        />
-        <span>
-          WebGL all Bode magnitude lines
-          <em>Draw every campaign run (up to 10k) via WebGL — bands still preferred for reading.</em>
-        </span>
-      </label>
-      <NumberField
-        label="Selected run (0 = nominal)"
-        value={mcRun}
-        step={1}
-        onCommit={(value) => selectMcRun(Math.max(0, Math.round(value)))}
-      />
-      <div className="design-actions">
-        <button type="button" className="ghost" onClick={() => selectMcRun(0)}>
-          Nominal
+      <div className="segmented" role="tablist" aria-label="Design sections">
+        <button type="button" role="tab" aria-selected={section === 'setup'} className={section === 'setup' ? 'on' : ''} onClick={() => setSection('setup')}>
+          Setup
         </button>
-        <button type="button" className="ghost" onClick={() => selectMcRun(mcRun + 1)} disabled={uncertainCount <= 0}>
-          Next run
-        </button>
-        <button type="button" className="ghost" onClick={() => runSelectedMc()}>
-          Run sim
+        <button
+          type="button"
+          role="tab"
+          aria-selected={section === 'results'}
+          className={section === 'results' ? 'on' : ''}
+          onClick={() => setSection('results')}
+          disabled={!view}
+        >
+          Results
         </button>
       </div>
-      {progress ? (
-        <div className="mc-progress" role="status" aria-live="polite">
-          <div className="mc-progress-meta">
-            <span>{progress.label}</span>
-            <span>
-              {progress.done.toLocaleString()}/{progress.total.toLocaleString()}
-              {progress.phase === 'sample' && progress.etaMs != null ? ` · ETA ${formatEta(progress.etaMs)}` : ''}
-              {progress.rate != null && progress.phase === 'sample' ? ` · ${progress.rate.toFixed(0)}/s` : ''}
-            </span>
-          </div>
-          <div className="mc-progress-track" aria-hidden>
-            <div
-              className={`mc-progress-fill${progress.phase !== 'sample' ? ' pulse' : ''}`}
-              style={{ width: `${Math.max(2, Math.min(100, (100 * progress.done) / Math.max(1, progress.total)))}%` }}
+
+      {section === 'setup' ? (
+        <>
+          <section className="analysis-card">
+            <h3>Linearization</h3>
+            <label className="field">
+              <span>Operating point</span>
+              <select value={design.opMode} onChange={(event) => setDesignOpMode(event.target.value as LinearizationPoint)}>
+                {OP_MODES.map((mode) => (
+                  <option key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+              <em>Where A, B are taken for LQR and stability analysis.</em>
+            </label>
+            <label className="field">
+              <span>x* (state)</span>
+              <input
+                value={design.xOp}
+                placeholder="0 0 0 …"
+                disabled={design.opMode !== 'custom'}
+                onChange={(event) => setDesignOp({ xOp: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>u* (input)</span>
+              <input value={design.uOp} placeholder="0" onChange={(event) => setDesignOp({ uOp: event.target.value })} />
+            </label>
+            <div className="design-actions">
+              <button type="button" className="ghost" onClick={() => captureLinearizationPoint('x0')}>
+                Capture x₀
+              </button>
+              <button type="button" className="ghost" onClick={() => captureLinearizationPoint('live')}>
+                Capture live
+              </button>
+            </div>
+          </section>
+
+          <section className="analysis-card">
+            <h3>Reports</h3>
+            <div className="analysis-options chip-grid">
+              {ALL_ANALYSIS_OPTIONS.map((option) => (
+                <label key={option.id} className={`chip-check${show(option.id) ? ' on' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={show(option.id)}
+                    onChange={(event) => setDesignAnalysis(option.id, event.target.checked)}
+                  />
+                  <span>
+                    {option.label}
+                    <em>{option.help}</em>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </section>
+
+          <section className="analysis-card">
+            <h3>LQR weights</h3>
+            {Q_LABELS.map((label, index) => (
+              <NumberField
+                key={label}
+                label={label}
+                value={design.Q[index] ?? 0}
+                step={1}
+                onCommit={(value) => setDesignWeight(index, Math.max(0, value))}
+              />
+            ))}
+            <NumberField label="R (control)" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
+          </section>
+
+          <section className="analysis-card">
+            <h3>Monte Carlo</h3>
+            <NumberField
+              label={`Campaign size (1…${MC_CAMPAIGN_MAX})`}
+              value={campaignSize}
+              step={100}
+              onCommit={(value) => setConfig({ mcCampaignSize: Math.min(MC_CAMPAIGN_MAX, Math.max(0, Math.round(value))) })}
             />
-          </div>
-          <p className="hint">
-            {progress.phase === 'sample'
-              ? 'Workers linearize each draw and compute closed-loop poles.'
-              : progress.phase === 'bode'
-                ? 'Batched frequency response (WebGPU when available).'
-                : 'Building percentile bands and overlay pack.'}
-          </p>
-        </div>
-      ) : null}
-      {campaign ? (
-        <ul className="gain-list report-summary">
-          <li>
-            <span>Stable</span>
-            <span>
-              {(100 * campaign.stableFraction).toFixed(1)}% ({campaign.stableCount}/{campaign.ok})
-            </span>
-          </li>
-          <li>
-            <span>α_cl median / p95</span>
-            <span>
-              {campaign.alphaP50 == null ? '—' : campaign.alphaP50.toFixed(3)} /{' '}
-              {campaign.alphaP95 == null ? '—' : campaign.alphaP95.toFixed(3)}
-            </span>
-          </li>
-          <li>
-            <span>Backend</span>
-            <span>
-              {campaign.backend} · {campaign.elapsedMs.toFixed(0)} ms
-            </span>
-          </li>
-        </ul>
-      ) : null}
-      <p className="hint">
-        {uncertainCount > 0
-          ? `Analyze runs a worker campaign (WebGPU Bode when large). Plots use percentile bands + ${overlayCount} grey overlays; black = nominal; amber = run ${selectedRun}.`
-          : 'Enable parameter distributions on the Properties tab to run a Monte Carlo campaign.'}
-      </p>
-
-      <h3>Linearization point</h3>
-      <label className="field">
-        <span>Operating point</span>
-        <select value={design.opMode} onChange={(event) => setDesignOpMode(event.target.value as LinearizationPoint)}>
-          {OP_MODES.map((mode) => (
-            <option key={mode.id} value={mode.id}>
-              {mode.label}
-            </option>
-          ))}
-        </select>
-        <em>Where A,B are taken for LQR and stability analysis.</em>
-      </label>
-      <label className="field">
-        <span>x* (state)</span>
-        <input
-          value={design.xOp}
-          placeholder="0 0 0 …"
-          disabled={design.opMode !== 'custom'}
-          onChange={(event) => setDesignOp({ xOp: event.target.value })}
-        />
-      </label>
-      <label className="field">
-        <span>u* (input)</span>
-        <input value={design.uOp} placeholder="0" onChange={(event) => setDesignOp({ uOp: event.target.value })} />
-      </label>
-      <div className="design-actions">
-        <button type="button" className="ghost" onClick={() => captureLinearizationPoint('x0')}>
-          Capture x₀
-        </button>
-        <button type="button" className="ghost" onClick={() => captureLinearizationPoint('live')}>
-          Capture live
-        </button>
-      </div>
-
-      <h3>Stability analysis</h3>
-      <div className="analysis-options">
-        {ALL_ANALYSIS_OPTIONS.map((option) => (
-          <label key={option.id} className="check">
-            <input
-              type="checkbox"
-              checked={show(option.id)}
-              onChange={(event) => setDesignAnalysis(option.id, event.target.checked)}
+            <NumberField
+              label={`Overlay lines (≤${MC_OVERLAY_MAX})`}
+              value={overlayCount}
+              step={16}
+              onCommit={(value) => setConfig({ mcOverlayCount: Math.min(MC_OVERLAY_MAX, Math.max(0, Math.round(value))) })}
             />
-            <span>
-              {option.label}
-              <em>{option.help}</em>
-            </span>
-          </label>
-        ))}
-      </div>
-
-      <h3>State weight Q</h3>
-      {Q_LABELS.map((label, index) => (
-        <NumberField
-          key={label}
-          label={label}
-          value={design.Q[index] ?? 0}
-          step={1}
-          onCommit={(value) => setDesignWeight(index, Math.max(0, value))}
-        />
-      ))}
-      <h3>Control weight R</h3>
-      <NumberField label="R (control)" value={design.R} step={0.1} onCommit={(value) => setDesignR(Math.max(0.01, value))} />
-
-      <div className="design-actions stacked">
-        <button className="ghost wide" onClick={() => analyzeController()}>
-          Analyze stability
-        </button>
-        <button className="primary wide" onClick={() => computeLqr()}>
-          Compute LQR and apply
-        </button>
-      </div>
-
-      {view ? (
-        <div className="poles">
-          <p>{view.summary}</p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={showAllLines}
+                onChange={(event) => setConfig({ mcShowAllLines: event.target.checked })}
+              />
+              <span>
+                WebGL all Bode magnitude lines
+                <em>Prefer bands for reading; enable for dense overlays.</em>
+              </span>
+            </label>
+            <NumberField
+              label="Selected run (0 = nominal)"
+              value={mcRun}
+              step={1}
+              onCommit={(value) => selectMcRun(Math.max(0, Math.round(value)))}
+            />
+            <div className="design-actions">
+              <button type="button" className="ghost" onClick={() => selectMcRun(0)}>
+                Nominal
+              </button>
+              <button type="button" className="ghost" onClick={() => selectMcRun(mcRun + 1)} disabled={uncertainCount <= 0}>
+                Next run
+              </button>
+              <button type="button" className="ghost" onClick={() => runSelectedMc()}>
+                Run sim
+              </button>
+            </div>
+            {progress ? (
+              <div className="mc-progress" role="status" aria-live="polite">
+                <div className="mc-progress-meta">
+                  <span>{progress.label}</span>
+                  <span>
+                    {progress.done.toLocaleString()}/{progress.total.toLocaleString()}
+                    {progress.phase === 'sample' && progress.etaMs != null ? ` · ETA ${formatEta(progress.etaMs)}` : ''}
+                    {progress.rate != null && progress.phase === 'sample' ? ` · ${progress.rate.toFixed(0)}/s` : ''}
+                  </span>
+                </div>
+                <div className="mc-progress-track" aria-hidden>
+                  <div
+                    className={`mc-progress-fill${progress.phase !== 'sample' ? ' pulse' : ''}`}
+                    style={{ width: `${Math.max(2, Math.min(100, (100 * progress.done) / Math.max(1, progress.total)))}%` }}
+                  />
+                </div>
+              </div>
+            ) : null}
+            <p className="hint">
+              {uncertainCount > 0
+                ? `Analyze launches a worker campaign. Plots use bands + ${overlayCount} overlays.`
+                : 'Enable parameter distributions on Properties to unlock Monte Carlo.'}
+            </p>
+          </section>
+        </>
+      ) : view ? (
+        <div className="poles design-results">
           {view.opLabel ? <p className="hint">Breakpoint: {view.opLabel}</p> : null}
 
+          {campaign ? (
+            <ul className="metric-grid campaign-metrics">
+              <li>
+                <span>Stable</span>
+                <strong>
+                  {(100 * campaign.stableFraction).toFixed(1)}%
+                </strong>
+              </li>
+              <li>
+                <span>α_cl p50</span>
+                <strong>{campaign.alphaP50 == null ? '—' : campaign.alphaP50.toFixed(3)}</strong>
+              </li>
+              <li>
+                <span>α_cl p95</span>
+                <strong>{campaign.alphaP95 == null ? '—' : campaign.alphaP95.toFixed(3)}</strong>
+              </li>
+              <li>
+                <span>Backend</span>
+                <strong>{campaign.backend}</strong>
+              </li>
+            </ul>
+          ) : null}
+
           {report?.conclusions ? (
-            <section className="stability-conclusions">
-              <h3>Stability conclusions</h3>
+            <section className="analysis-card stability-conclusions">
+              <h3>Conclusions</h3>
               <p className={`conclusion-headline verdict-${report.conclusions.closedLoop}`}>{report.conclusions.headline}</p>
               <ul className="verdict-row" aria-label="Stability verdicts">
                 <li>
@@ -725,30 +748,28 @@ function DesignPane() {
           ) : null}
 
           {report?.margins ? (
-            <section className="stability-margins">
+            <section className="analysis-card stability-margins">
               <h3>Stability margins</h3>
-              <ul className="gain-list">
+              <ul className="metric-grid">
                 <li>
-                  <span>Gain margin</span>
-                  <span>{report.margins.gainMarginDb == null ? '—' : `${report.margins.gainMarginDb.toFixed(1)} dB`}</span>
+                  <span>Gain</span>
+                  <strong>{report.margins.gainMarginDb == null ? '—' : `${report.margins.gainMarginDb.toFixed(1)} dB`}</strong>
                 </li>
                 <li>
-                  <span>Phase margin</span>
-                  <span>{report.margins.phaseMarginDeg == null ? '—' : `${report.margins.phaseMarginDeg.toFixed(1)}°`}</span>
+                  <span>Phase</span>
+                  <strong>{report.margins.phaseMarginDeg == null ? '—' : `${report.margins.phaseMarginDeg.toFixed(1)}°`}</strong>
                 </li>
                 <li>
-                  <span>Delay margin</span>
-                  <span>
-                    {report.margins.delayMarginSec == null ? '—' : `${report.margins.delayMarginSec.toFixed(3)} s`}
-                  </span>
+                  <span>Delay</span>
+                  <strong>{report.margins.delayMarginSec == null ? '—' : `${report.margins.delayMarginSec.toFixed(3)} s`}</strong>
                 </li>
                 <li>
                   <span>ω_gc</span>
-                  <span>{report.margins.gainCrossoverRad == null ? '—' : `${report.margins.gainCrossoverRad.toFixed(2)} rad/s`}</span>
+                  <strong>{report.margins.gainCrossoverRad == null ? '—' : `${report.margins.gainCrossoverRad.toFixed(2)}`}</strong>
                 </li>
                 <li>
                   <span>ω_pc</span>
-                  <span>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)} rad/s`}</span>
+                  <strong>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)}`}</strong>
                 </li>
               </ul>
               <p className="hint">{report.margins.note}</p>
@@ -756,19 +777,26 @@ function DesignPane() {
           ) : null}
 
           {report ? (
-            <StabilityPlotGrid
-              report={report}
-              nominal={nominalReport}
-              ensemble={ensemble}
-              selectedRun={selectedRun}
-              campaign={campaign}
-              showAllLines={showAllLines}
-              show={show}
-            />
+            <section className="analysis-card plots-card">
+              <div className="stability-plot-head section-head">
+                <h3>Plots</h3>
+                <span className="hint">Tap a chart for detail</span>
+              </div>
+              <StabilityPlotGrid
+                report={report}
+                nominal={nominalReport}
+                ensemble={ensemble}
+                selectedRun={selectedRun}
+                campaign={campaign}
+                showAllLines={showAllLines}
+                show={show}
+                onSelectRun={(run) => selectMcRun(run)}
+              />
+            </section>
           ) : null}
 
           {show('poles') ? (
-            <>
+            <section className="analysis-card">
               <h3>Open-loop poles</h3>
               <ul>
                 {view.open.map((pole) => (
@@ -785,11 +813,11 @@ function DesignPane() {
                   </li>
                 ))}
               </ul>
-            </>
+            </section>
           ) : null}
 
           {show('damping') && report?.modes.length ? (
-            <>
+            <section className="analysis-card">
               <h3>Closed-loop modes</h3>
               <ul className="gain-list">
                 {report.modes.map((mode) => (
@@ -801,11 +829,11 @@ function DesignPane() {
                   </li>
                 ))}
               </ul>
-            </>
+            </section>
           ) : null}
 
           {show('ctrb') && report ? (
-            <>
+            <section className="analysis-card">
               <h3>Controllability</h3>
               <ul className="gain-list">
                 <li>
@@ -816,22 +844,33 @@ function DesignPane() {
                   </span>
                 </li>
               </ul>
-            </>
+            </section>
           ) : null}
 
-          <h3>Block gains</h3>
-          <ul className="gain-list">
-            {view.gains.map((gain) => (
-              <li key={gain.id}>
-                <span>{gain.id}</span>
-                <span>{gain.value.toFixed(3)}</span>
-              </li>
-            ))}
-          </ul>
+          <section className="analysis-card">
+            <h3>Block gains</h3>
+            <ul className="gain-list">
+              {view.gains.map((gain) => (
+                <li key={gain.id}>
+                  <span>{gain.id}</span>
+                  <span>{gain.value.toFixed(3)}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
         </div>
       ) : (
-        <p className="hint">Select a plant, set the breakpoint, then Analyze or Compute LQR.</p>
+        <p className="hint empty-results">Select a plant, set the breakpoint, then Analyze or Compute LQR.</p>
       )}
+
+      <div className="design-sticky-actions">
+        <button className="ghost" onClick={runAnalyze}>
+          Analyze
+        </button>
+        <button className="primary" onClick={runLqr}>
+          Compute LQR
+        </button>
+      </div>
     </div>
   );
 }
