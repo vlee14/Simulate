@@ -17,6 +17,7 @@ import {
 } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
+import { BtnIcon } from './Icon';
 
 export function LabPane() {
   const elements = useStore((s) => s.elements);
@@ -121,7 +122,7 @@ export function LabPane() {
             })
           }
         >
-          Run experiment
+          <BtnIcon icon="play">Run experiment</BtnIcon>
         </button>
       </div>
       {experiment ? (
@@ -166,7 +167,7 @@ export function LabPane() {
             })
           }
         >
-          Run sensitivity
+          <BtnIcon icon="inspect">Run sensitivity</BtnIcon>
         </button>
       </div>
       {sensitivity ? (
@@ -214,7 +215,7 @@ export function LabPane() {
           disabled={!experiment}
           onClick={() => experiment && downloadText('experiment.json', experimentToJson(experiment), 'application/json')}
         >
-          Export experiment JSON
+          <BtnIcon icon="download">Export experiment JSON</BtnIcon>
         </button>
         <button
           type="button"
@@ -225,7 +226,7 @@ export function LabPane() {
             downloadText('experiment-trace.csv', traceToCsv(experiment.nominal.trace.t, experiment.nominal.trace.y), 'text/csv')
           }
         >
-          Export nominal CSV
+          <BtnIcon icon="download">Export nominal CSV</BtnIcon>
         </button>
         <button
           type="button"
@@ -233,7 +234,7 @@ export function LabPane() {
           disabled={!experiment?.envelope}
           onClick={() => experiment?.envelope && downloadText('experiment-envelope.csv', envelopeToCsv(experiment.envelope), 'text/csv')}
         >
-          Export envelope CSV
+          <BtnIcon icon="download">Export envelope CSV</BtnIcon>
         </button>
         <button
           type="button"
@@ -241,7 +242,7 @@ export function LabPane() {
           disabled={!sensitivity}
           onClick={() => sensitivity && downloadText('sensitivity.json', sensitivityToJson(sensitivity), 'application/json')}
         >
-          Export sensitivity JSON
+          <BtnIcon icon="download">Export sensitivity JSON</BtnIcon>
         </button>
         <button
           type="button"
@@ -251,7 +252,7 @@ export function LabPane() {
             designView?.mcCampaign && downloadText('mc-campaign.json', campaignToJson(designView.mcCampaign), 'application/json')
           }
         >
-          Export MC campaign JSON
+          <BtnIcon icon="download">Export MC campaign JSON</BtnIcon>
         </button>
         <button
           type="button"
@@ -266,7 +267,7 @@ export function LabPane() {
             }
           }}
         >
-          Copy share link
+          <BtnIcon icon="copy">Copy share link</BtnIcon>
         </button>
       </div>
       {shareMsg ? <p className="hint">{shareMsg}</p> : null}

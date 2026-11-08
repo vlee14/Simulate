@@ -5,6 +5,7 @@ import { SimDocument } from '../model/document';
 import { readShareFromLocation } from '../engine/exportShare';
 import { resetSim } from '../sim/controller';
 import { confirmClose, useStore } from '../store';
+import { BtnIcon } from './Icon';
 
 export const Home: React.FC = () => {
   const entries = useStore((state) => state.entries);
@@ -59,10 +60,12 @@ export const Home: React.FC = () => {
           </div>
         </div>
         <div className="home-actions">
-          <button className="primary" onClick={() => open(blankDocument(), null)}>
-            New model
+          <button type="button" className="primary" onClick={() => open(blankDocument(), null)}>
+            <BtnIcon icon="plus">New model</BtnIcon>
           </button>
-          <button onClick={() => fileRef.current?.click()}>Open JSON…</button>
+          <button type="button" onClick={() => fileRef.current?.click()}>
+            <BtnIcon icon="upload">Open JSON…</BtnIcon>
+          </button>
           <input
             ref={fileRef}
             type="file"
@@ -94,15 +97,16 @@ export const Home: React.FC = () => {
                       <span>{entry.document.nodes.length} blocks</span>
                       <span>{new Date(entry.updatedAt).toLocaleString()}</span>
                     </div>
-                    <button className="primary" onClick={() => open(entry.document, entry.id)}>
-                      Open
+                    <button type="button" className="primary" onClick={() => open(entry.document, entry.id)}>
+                      <BtnIcon icon="folderOpen">Open</BtnIcon>
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         if (window.confirm(`Delete “${entry.document.name}” from this browser?`)) deleteEntry(entry.id);
                       }}
                     >
-                      Delete
+                      <BtnIcon icon="trash">Delete</BtnIcon>
                     </button>
                   </footer>
                 </article>
@@ -121,13 +125,14 @@ export const Home: React.FC = () => {
                 <p>{example.summary}</p>
                 <footer>
                   <button
+                    type="button"
                     className="primary"
                     onClick={() => {
                       if (!confirmClose()) return;
                       open(example.create(), null);
                     }}
                   >
-                    Open
+                    <BtnIcon icon="folderOpen">Open</BtnIcon>
                   </button>
                 </footer>
               </article>

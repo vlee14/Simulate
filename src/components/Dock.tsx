@@ -6,6 +6,7 @@ import { fireDisturbance, nudgeState, setControlValue } from '../sim/controller'
 import { useStore } from '../store';
 import { COMPACT_LAYOUT, useMediaQuery } from '../ui';
 import { drawStage, stageCameraFor } from './draw';
+import { BtnIcon } from './Icon';
 
 export const Dock: React.FC = () => {
   const elements = useStore((state) => state.elements);
@@ -193,7 +194,9 @@ export const Dock: React.FC = () => {
   return (
     <section className={`dock ${open ? 'open' : ''}`}>
       <div className="dock-bar">
-        <button onClick={() => setOpen((value) => !value)}>{open ? 'Hide stage' : 'Show stage'}</button>
+        <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+          <BtnIcon icon={open ? 'chevronDown' : 'chevronUp'}>{open ? 'Hide stage' : 'Show stage'}</BtnIcon>
+        </button>
         <strong>Stage</strong>
         <span>
           {control

@@ -156,6 +156,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   height: 34px;
   padding: 0 12px;
 }
+.btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+.btn-with-icon .btn-label {
+  min-width: 0;
+}
+.ui-icon {
+  flex: 0 0 auto;
+  display: block;
+  opacity: 0.92;
+}
+.menu .btn-with-icon {
+  justify-content: flex-start;
+  width: 100%;
+}
+.transport button,
+.top-actions button,
+.dock-bar button,
+.ghost,
+.primary,
+.drawer-close,
+.plot-expand,
+.home-actions button,
+.doc-card footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .transport .play {
   background: var(--accent);
   color: var(--accent-ink);

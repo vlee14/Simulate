@@ -6,6 +6,7 @@ import { fitDiagram } from '../sim/flow';
 import { pause, play, resetSim } from '../sim/controller';
 import { confirmClose, useStore } from '../store';
 import { downloadText, formatTime } from '../ui';
+import { BtnIcon } from './Icon';
 
 function appearanceLabel(choice: Appearance): string {
   if (choice === 'light') return 'Appearance: Light';
@@ -111,7 +112,7 @@ export const Toolbar: React.FC<{
           aria-pressed={drawer === 'library'}
           onClick={() => onToggleDrawer('library')}
         >
-          Blocks
+          <BtnIcon icon="blocks">Blocks</BtnIcon>
         </button>
         <button
           type="button"
@@ -119,17 +120,24 @@ export const Toolbar: React.FC<{
           aria-pressed={drawer === 'inspector'}
           onClick={() => onToggleDrawer('inspector')}
         >
-          Inspect
+          <BtnIcon icon="inspect">Inspect</BtnIcon>
         </button>
-        <button className={running ? 'play on' : 'play'} onClick={() => (running ? pause() : play())}>
-          {running ? 'Pause' : status === 'paused' ? 'Resume' : 'Run'}
+        <button
+          type="button"
+          className={running ? 'play on' : 'play'}
+          onClick={() => (running ? pause() : play())}
+          aria-label={running ? 'Pause' : status === 'paused' ? 'Resume' : 'Run'}
+        >
+          <BtnIcon icon={running ? 'pause' : 'play'}>{running ? 'Pause' : status === 'paused' ? 'Resume' : 'Run'}</BtnIcon>
         </button>
-        <button onClick={() => resetSim()}>Reset</button>
+        <button type="button" onClick={() => resetSim()} title="Reset simulation">
+          <BtnIcon icon="reset">Reset</BtnIcon>
+        </button>
         <button type="button" disabled={!canUndo} title="Undo (Ctrl+Z)" onClick={() => undo()}>
-          Undo
+          <BtnIcon icon="undo">Undo</BtnIcon>
         </button>
         <button type="button" disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" onClick={() => redo()}>
-          Redo
+          <BtnIcon icon="redo">Redo</BtnIcon>
         </button>
         <div className="clock">{formatTime(time)}</div>
       </div>
@@ -165,9 +173,11 @@ export const Toolbar: React.FC<{
             onChange={(event) => setConfig({ mcRun: Math.max(0, Math.round(Number(event.target.value) || 0)) })}
           />
         </label>
-        <button onClick={() => fitDiagram()}>Fit</button>
-        <button className="save-desktop" onClick={() => saveLibrary()}>
-          Save
+        <button type="button" onClick={() => fitDiagram()} title="Fit diagram">
+          <BtnIcon icon="fit">Fit</BtnIcon>
+        </button>
+        <button type="button" className="save-desktop" onClick={() => saveLibrary()}>
+          <BtnIcon icon="save">Save</BtnIcon>
         </button>
         {selectedIds.length ? (
           <button
@@ -178,46 +188,58 @@ export const Toolbar: React.FC<{
               useStore.getState().removeIds(useStore.getState().selectedIds);
             }}
           >
-            Delete
+            <BtnIcon icon="trash">Delete</BtnIcon>
           </button>
         ) : null}
         <div className="menu-wrap">
-          <button aria-expanded={menu} aria-haspopup="menu" onClick={() => setMenu((open) => !open)}>
-            File
+          <button type="button" aria-expanded={menu} aria-haspopup="menu" onClick={() => setMenu((open) => !open)}>
+            <BtnIcon icon="file">File</BtnIcon>
           </button>
           {menu ? (
             <>
               <button type="button" className="menu-backdrop" aria-label="Close menu" onClick={() => setMenu(false)} />
               <div className="menu">
-              <button onClick={() => openFresh(blankDocument)}>New model</button>
-              <button onClick={leave}>All documents</button>
+              <button type="button" onClick={() => openFresh(blankDocument)}>
+                <BtnIcon icon="plus">New model</BtnIcon>
+              </button>
+              <button type="button" onClick={leave}>
+                <BtnIcon icon="home">All documents</BtnIcon>
+              </button>
               <button
+                type="button"
                 onClick={() => {
                   saveLibrary();
                   setMenu(false);
                 }}
               >
-                Save to this browser
+                <BtnIcon icon="save">Save to this browser</BtnIcon>
               </button>
               <button
+                type="button"
                 onClick={() => {
                   saveLibraryCopy();
                   setMenu(false);
                 }}
               >
-                Save a copy
+                <BtnIcon icon="copy">Save a copy</BtnIcon>
               </button>
-              <button onClick={saveFile}>Export JSON…</button>
-              <button onClick={() => fileRef.current?.click()}>Open JSON…</button>
+              <button type="button" onClick={saveFile}>
+                <BtnIcon icon="download">Export JSON…</BtnIcon>
+              </button>
+              <button type="button" onClick={() => fileRef.current?.click()}>
+                <BtnIcon icon="upload">Open JSON…</BtnIcon>
+              </button>
               <button
                 type="button"
                 onClick={() => setAppearanceState(cycleAppearance(appearance))}
               >
-                {appearanceLabel(appearance)}
+                <BtnIcon icon={appearance === 'dark' ? 'moon' : appearance === 'light' ? 'sun' : 'monitor'}>
+                  {appearanceLabel(appearance)}
+                </BtnIcon>
               </button>
               <p>Examples</p>
               {EXAMPLES.map((example) => (
-                <button key={example.id} onClick={() => openFresh(example.create)}>
+                <button key={example.id} type="button" onClick={() => openFresh(example.create)}>
                   {example.name}
                 </button>
               ))}

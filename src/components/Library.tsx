@@ -4,6 +4,7 @@ import { PLANT_RECIPES, recipeSubsystemNode } from '../model/builder';
 import { useStore } from '../store';
 import { CATEGORY_COLOR } from '../ui';
 import { flowApi } from '../sim/flow';
+import { BtnIcon } from './Icon';
 import { ShapeMark } from './shapes';
 
 export const Library: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
@@ -82,16 +83,16 @@ export const Library: React.FC<{ mobileOpen: boolean; compact: boolean; onClose:
     <aside className={mobileOpen ? 'library mobile-open' : 'library'} aria-hidden={compact && !mobileOpen}>
       <div className="panel-head">
         <div className="panel-label">Library</div>
-        <button type="button" className="drawer-close" onClick={onClose}>
-          Close
+        <button type="button" className="drawer-close" onClick={onClose} aria-label="Close library">
+          <BtnIcon icon="close">Close</BtnIcon>
         </button>
       </div>
       <div className="tabs library-tabs">
-        <button className={tab === 'blocks' ? 'on' : ''} onClick={() => setTab('blocks')}>
-          Blocks
+        <button type="button" className={tab === 'blocks' ? 'on' : ''} onClick={() => setTab('blocks')}>
+          <BtnIcon icon="blocks">Blocks</BtnIcon>
         </button>
-        <button className={tab === 'plants' ? 'on' : ''} onClick={() => setTab('plants')}>
-          Plant builder
+        <button type="button" className={tab === 'plants' ? 'on' : ''} onClick={() => setTab('plants')}>
+          <BtnIcon icon="folder">Plant builder</BtnIcon>
         </button>
       </div>
       <input

@@ -8,6 +8,7 @@ import {
   wrapNicholsPhase,
 } from '../engine/plotAxes';
 import { FreqPoint, RootLocusBranch, StabilityReport } from '../engine/stability';
+import { BtnIcon } from './Icon';
 
 export type ChartKind = 'bode-mag' | 'bode-phase' | 'nyquist' | 'nichols' | 'poles' | 'rlocus';
 
@@ -666,7 +667,7 @@ export function EnsembleChart({
         <h3>{title}</h3>
         {interactive ? (
           <button type="button" className="plot-expand" onClick={onOpen} aria-label={`Open ${title} detail`}>
-            Open
+            <BtnIcon icon="expand">Open</BtnIcon>
           </button>
         ) : null}
       </div>

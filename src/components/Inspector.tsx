@@ -27,6 +27,7 @@ import {
 } from '../sim/controller';
 import { useStore } from '../store';
 import { downloadText } from '../ui';
+import { BtnIcon } from './Icon';
 import { LabPane } from './LabPane';
 import { StabilityPlotGrid } from './StabilityPlots';
 
@@ -63,8 +64,8 @@ export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClos
         <button className={tab === 'lab' ? 'on' : ''} onClick={() => setTab('lab')}>
           Lab
         </button>
-        <button type="button" className="drawer-close" onClick={onClose}>
-          Close
+        <button type="button" className="drawer-close" onClick={onClose} aria-label="Close inspector">
+          <BtnIcon icon="close">Close</BtnIcon>
         </button>
       </div>
       <div className="inspector-scroll">
@@ -752,13 +753,13 @@ function DesignPane() {
             />
             <div className="design-actions">
               <button type="button" className="ghost" onClick={() => selectMcRun(0)}>
-                Nominal
+                <BtnIcon icon="home">Nominal</BtnIcon>
               </button>
               <button type="button" className="ghost" onClick={() => selectMcRun(mcRun + 1)} disabled={uncertainCount <= 0}>
-                Next run
+                <BtnIcon icon="chevronRight">Next run</BtnIcon>
               </button>
               <button type="button" className="ghost" onClick={() => runSelectedMc()}>
-                Run sim
+                <BtnIcon icon="play">Run sim</BtnIcon>
               </button>
             </div>
             {progress ? (

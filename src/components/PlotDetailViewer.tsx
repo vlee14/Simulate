@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { McCampaignStats } from '../engine/mcStats';
 import { StabilityReport } from '../engine/stability';
 import { ChartKind, EnsembleChart } from './EnsembleCanvas';
+import { BtnIcon } from './Icon';
 
 const TITLES: Record<ChartKind, string> = {
   poles: 'Pole map',
@@ -84,7 +85,7 @@ export function PlotDetailViewer({
             <h2>{TITLES[kind]}</h2>
           </div>
           <button type="button" className="ghost" onClick={onClose}>
-            Done
+            <BtnIcon icon="close">Done</BtnIcon>
           </button>
         </header>
 
@@ -155,7 +156,7 @@ export function PlotDetailViewer({
                 <h3>Compare run</h3>
                 <div className="run-scrubber">
                   <button type="button" className="ghost" onClick={() => onSelectRun(0)}>
-                    Nominal
+                    <BtnIcon icon="home">Nominal</BtnIcon>
                   </button>
                   <label className="field compact">
                     <span>Run</span>
@@ -168,7 +169,7 @@ export function PlotDetailViewer({
                     />
                   </label>
                   <button type="button" className="ghost" onClick={() => onSelectRun(selectedRun + 1)}>
-                    Next
+                    <BtnIcon icon="chevronRight">Next</BtnIcon>
                   </button>
                 </div>
               </section>
