@@ -1,16 +1,49 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { McCampaignStats, PercentileBand } from '../engine/mcStats';
 import { FreqPoint, RootLocusBranch, StabilityReport } from '../engine/stability';
 
-const MC = '#9aa3b2';
-const NOM = '#111827';
-const SEL = '#c45c26';
-const BAND = 'rgba(154,163,178,0.22)';
-const BAND_INNER = 'rgba(154,163,178,0.35)';
-const BG = '#f4f6f8';
-const AXIS = '#c5cbd3';
-
 export type ChartKind = 'bode-mag' | 'bode-phase' | 'nyquist' | 'nichols' | 'poles' | 'rlocus';
+
+type PlotTheme = {
+  bg: string;
+  axis: string;
+  mc: string;
+  nom: string;
+  sel: string;
+  band: string;
+  bandInner: string;
+  label: string;
+};
+
+const FALLBACK: PlotTheme = {
+  bg: '#f4f6f8',
+  axis: '#c5cbd3',
+  mc: '#9aa3b2',
+  nom: '#111827',
+  sel: '#c45c26',
+  band: 'rgba(154,163,178,0.22)',
+  bandInner: 'rgba(154,163,178,0.35)',
+  label: '#6b7785',
+};
+
+function readPlotTheme(el: HTMLElement | null): PlotTheme {
+  if (!el) return FALLBACK;
+  const s = getComputedStyle(el);
+  const pick = (name: string, fallback: string) => {
+    const v = s.getPropertyValue(name).trim();
+    return v || fallback;
+  };
+  return {
+    bg: pick('--plot-bg', FALLBACK.bg),
+    axis: pick('--plot-axis', FALLBACK.axis),
+    mc: pick('--plot-mc', FALLBACK.mc),
+    nom: pick('--plot-nom', FALLBACK.nom),
+    sel: pick('--plot-sel', FALLBACK.sel),
+    band: pick('--plot-band', FALLBACK.band),
+    bandInner: pick('--plot-band-inner', FALLBACK.bandInner),
+    label: pick('--plot-label', FALLBACK.label),
+  };
+}
 
 function drawBand(
   ctx: CanvasRenderingContext2D,
@@ -76,7 +109,6 @@ function drawWebGlLines(
 ) {
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: true, premultipliedAlpha: false });
   if (!gl) return false;
-  // Transform CPU-side into pixel space (simple, robust for inspector sizes)
   const pixels = new Float32Array(xy.length);
   for (let i = 0; i < xy.length; i += 2) {
     const x = xy[i];
@@ -89,7 +121,6 @@ function drawWebGlLines(
       pixels[i + 1] = toY(y);
     }
   }
-  // Convert to NDC and split on NaN breaks into drawArrays chunks
   const w = canvas.width;
   const h = canvas.height;
   const vsSource = `#version 300 es
@@ -152,13 +183,17 @@ export function EnsembleChart({
   kind,
   title,
   hint,
-  width = 240,
+  width,
   height = 160,
   nominal,
   selected,
   ensembleFreq,
   campaign,
   showAllLines,
+  fill = false,
+  compact = true,
+  expandable = false,
+  onOpen,
 }: {
   kind: ChartKind;
   title: string;
@@ -167,27 +202,53 @@ export function EnsembleChart({
   height?: number;
   nominal?: StabilityReport | null;
   selected?: StabilityReport | null;
-  /** Overlay freq series (subset). */
   ensembleFreq?: { run: number; freq: FreqPoint[] }[];
   campaign?: McCampaignStats | null;
   showAllLines?: boolean;
+  /** Stretch to parent width via ResizeObserver. */
+  fill?: boolean;
+  compact?: boolean;
+  expandable?: boolean;
+  onOpen?: () => void;
 }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glRef = useRef<HTMLCanvasElement>(null);
+  const [autoWidth, setAutoWidth] = useState(width ?? 280);
+
+  useEffect(() => {
+    if (!fill || width != null) {
+      if (width != null) setAutoWidth(width);
+      return;
+    }
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && Number.isFinite(w)) setAutoWidth(Math.max(180, Math.floor(w)));
+    });
+    ro.observe(el);
+    setAutoWidth(Math.max(180, Math.floor(el.clientWidth || 280)));
+    return () => ro.disconnect();
+  }, [fill, width]);
+
+  const plotW = width ?? autoWidth;
+  const plotH = height;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const theme = readPlotTheme(wrapRef.current);
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
+    canvas.width = Math.round(plotW * dpr);
+    canvas.height = Math.round(plotH * dpr);
+    canvas.style.width = `${plotW}px`;
+    canvas.style.height = `${plotH}px`;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = theme.bg;
+    ctx.fillRect(0, 0, plotW, plotH);
 
     const padL = kind === 'bode-mag' || kind === 'bode-phase' || kind === 'nichols' ? 34 : 18;
     const padR = 10;
@@ -195,13 +256,13 @@ export function EnsembleChart({
     const padB = 22;
 
     const drawAxes = (toX: (v: number) => number, toY: (v: number) => number, x0: number, y0: number) => {
-      ctx.strokeStyle = AXIS;
+      ctx.strokeStyle = theme.axis;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(toX(x0), padT);
-      ctx.lineTo(toX(x0), height - padB);
+      ctx.lineTo(toX(x0), plotH - padB);
       ctx.moveTo(padL, toY(y0));
-      ctx.lineTo(width - padR, toY(y0));
+      ctx.lineTo(plotW - padR, toY(y0));
       ctx.stroke();
     };
 
@@ -214,11 +275,11 @@ export function EnsembleChart({
       ];
       if (!pts.length) return;
       const lim = Math.max(1, ...pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)))) * 1.15;
-      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (width - padL - padR);
-      const toY = (im: number) => height - padB - ((im + lim) / (2 * lim)) * (height - padT - padB);
+      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (plotW - padL - padR);
+      const toY = (im: number) => plotH - padB - ((im + lim) / (2 * lim)) * (plotH - padT - padB);
       drawAxes(toX, toY, 0, 0);
       const cloud = campaign?.poleCloud ?? [];
-      ctx.fillStyle = MC;
+      ctx.fillStyle = theme.mc;
       ctx.globalAlpha = cloud.length > 2000 ? 0.08 : cloud.length > 400 ? 0.15 : 0.35;
       for (const p of cloud) {
         ctx.beginPath();
@@ -227,14 +288,14 @@ export function EnsembleChart({
       }
       ctx.globalAlpha = 1;
       if (nominal) {
-        ctx.strokeStyle = NOM;
+        ctx.strokeStyle = theme.nom;
         ctx.lineWidth = 1.6;
         for (const p of nominal.polesOpen) {
           ctx.beginPath();
           ctx.arc(toX(p.real), toY(p.imag), 4, 0, Math.PI * 2);
           ctx.stroke();
         }
-        ctx.fillStyle = NOM;
+        ctx.fillStyle = theme.nom;
         for (const p of nominal.polesClosed) {
           ctx.beginPath();
           ctx.arc(toX(p.real), toY(p.imag), 3.2, 0, Math.PI * 2);
@@ -242,7 +303,7 @@ export function EnsembleChart({
         }
       }
       if (selected) {
-        ctx.strokeStyle = SEL;
+        ctx.strokeStyle = theme.sel;
         ctx.lineWidth = 1.8;
         for (const p of selected.polesClosed) {
           ctx.beginPath();
@@ -270,15 +331,15 @@ export function EnsembleChart({
       }
       const xMin = band?.x[0] ?? Math.log10(nom[0]?.w ?? 1e-3);
       const xMax = band?.x[(band?.x.length ?? 1) - 1] ?? Math.log10(nom[nom.length - 1]?.w ?? 1e3);
-      const toX = (lx: number) => padL + ((lx - xMin) / (xMax - xMin || 1)) * (width - padL - padR);
-      const toY = (y: number) => padT + ((yMax - y) / (yMax - yMin || 1)) * (height - padT - padB);
+      const toX = (lx: number) => padL + ((lx - xMin) / (xMax - xMin || 1)) * (plotW - padL - padR);
+      const toY = (y: number) => padT + ((yMax - y) / (yMax - yMin || 1)) * (plotH - padT - padB);
       if (band) {
-        drawBand(ctx, band, toX, toY, 'p05', 'p95', BAND);
-        drawBand(ctx, band, toX, toY, 'p25', 'p75', BAND_INNER);
+        drawBand(ctx, band, toX, toY, 'p05', 'p95', theme.band);
+        drawBand(ctx, band, toX, toY, 'p25', 'p75', theme.bandInner);
         strokeSeries(
           ctx,
           band.x.map((x, i) => ({ x: toX(x), y: toY(band.p50[i]) })),
-          MC,
+          theme.mc,
           1.2,
           0.9,
           [3, 2]
@@ -291,8 +352,8 @@ export function EnsembleChart({
       if (wantAll && glCanvas) {
         glCanvas.width = canvas.width;
         glCanvas.height = canvas.height;
-        glCanvas.style.width = `${width}px`;
-        glCanvas.style.height = `${height}px`;
+        glCanvas.style.width = `${plotW}px`;
+        glCanvas.style.height = `${plotH}px`;
         drawWebGlLines(glCanvas, pack.xy, toX, toY, [0.6, 0.64, 0.7, 0.12]);
       } else {
         if (glCanvas) {
@@ -307,7 +368,7 @@ export function EnsembleChart({
               x: toX(Math.log10(Math.max(1e-12, p.w))),
               y: toY(kind === 'bode-mag' ? p.magDb : p.phaseDeg),
             })),
-            MC,
+            theme.mc,
             1,
             alpha
           );
@@ -321,7 +382,7 @@ export function EnsembleChart({
             x: toX(Math.log10(Math.max(1e-12, p.w))),
             y: toY(kind === 'bode-mag' ? p.magDb : p.phaseDeg),
           })),
-          NOM,
+          theme.nom,
           2,
           1,
           kind === 'bode-phase' ? [4, 2] : undefined
@@ -334,15 +395,15 @@ export function EnsembleChart({
             x: toX(Math.log10(Math.max(1e-12, p.w))),
             y: toY(kind === 'bode-mag' ? p.magDb : p.phaseDeg),
           })),
-          SEL,
+          theme.sel,
           1.8
         );
       }
-      ctx.fillStyle = '#6b7785';
-      ctx.font = '9px sans-serif';
+      ctx.fillStyle = theme.label;
+      ctx.font = '9px system-ui, sans-serif';
       ctx.fillText(kind === 'bode-mag' ? 'dB' : 'deg', 4, padT + 8);
       ctx.textAlign = 'right';
-      ctx.fillText('ω', width - padR, height - 6);
+      ctx.fillText('ω', plotW - padR, plotH - 6);
       return;
     }
 
@@ -354,8 +415,8 @@ export function EnsembleChart({
       ];
       let lim = Math.max(1, ...vals.map((v) => Math.abs(v))) * 1.15;
       lim = Math.min(lim, 20);
-      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (width - padL - padR);
-      const toY = (im: number) => height - padB - ((im + lim) / (2 * lim)) * (height - padT - padB);
+      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (plotW - padL - padR);
+      const toY = (im: number) => plotH - padB - ((im + lim) / (2 * lim)) * (plotH - padT - padB);
       drawAxes(toX, toY, 0, 0);
       ctx.strokeStyle = 'rgba(196,92,38,0.4)';
       ctx.beginPath();
@@ -366,13 +427,13 @@ export function EnsembleChart({
         strokeSeries(
           ctx,
           t.freq.filter((p) => Math.abs(p.re) <= lim * 1.05 && Math.abs(p.im) <= lim * 1.05).map((p) => ({ x: toX(p.re), y: toY(p.im) })),
-          MC,
+          theme.mc,
           1,
           alpha
         );
       }
-      if (nom.length) strokeSeries(ctx, nom.map((p) => ({ x: toX(p.re), y: toY(p.im) })), NOM, 2.1);
-      if (selected?.freq?.length) strokeSeries(ctx, selected.freq.map((p) => ({ x: toX(p.re), y: toY(p.im) })), SEL, 1.8);
+      if (nom.length) strokeSeries(ctx, nom.map((p) => ({ x: toX(p.re), y: toY(p.im) })), theme.nom, 2.1);
+      if (selected?.freq?.length) strokeSeries(ctx, selected.freq.map((p) => ({ x: toX(p.re), y: toY(p.im) })), theme.sel, 1.8);
       return;
     }
 
@@ -384,23 +445,23 @@ export function EnsembleChart({
       let phMax = Math.max(...all.map((p) => p.phaseDeg), 0);
       let magMin = Math.min(...all.map((p) => p.magDb), -40);
       let magMax = Math.max(...all.map((p) => p.magDb), 20);
-      const toX = (ph: number) => padL + ((ph - phMin) / (phMax - phMin || 1)) * (width - padL - padR);
-      const toY = (db: number) => padT + ((magMax - db) / (magMax - magMin || 1)) * (height - padT - padB);
-      ctx.strokeStyle = AXIS;
+      const toX = (ph: number) => padL + ((ph - phMin) / (phMax - phMin || 1)) * (plotW - padL - padR);
+      const toY = (db: number) => padT + ((magMax - db) / (magMax - magMin || 1)) * (plotH - padT - padB);
+      ctx.strokeStyle = theme.axis;
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(toX(-180), padT);
-      ctx.lineTo(toX(-180), height - padB);
+      ctx.lineTo(toX(-180), plotH - padB);
       ctx.moveTo(padL, toY(0));
-      ctx.lineTo(width - padR, toY(0));
+      ctx.lineTo(plotW - padR, toY(0));
       ctx.stroke();
       ctx.setLineDash([]);
       const alpha = (ensembleFreq?.length ?? 0) > 80 ? 0.1 : 0.35;
       for (const t of ensembleFreq ?? []) {
-        strokeSeries(ctx, t.freq.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), MC, 1, alpha);
+        strokeSeries(ctx, t.freq.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), theme.mc, 1, alpha);
       }
-      if (nom.length) strokeSeries(ctx, nom.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), NOM, 2.1);
-      if (selected?.freq?.length) strokeSeries(ctx, selected.freq.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), SEL, 1.8);
+      if (nom.length) strokeSeries(ctx, nom.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), theme.nom, 2.1);
+      if (selected?.freq?.length) strokeSeries(ctx, selected.freq.map((p) => ({ x: toX(p.phaseDeg), y: toY(p.magDb) })), theme.sel, 1.8);
       return;
     }
 
@@ -413,20 +474,20 @@ export function EnsembleChart({
       ];
       if (!pts.length) return;
       const lim = Math.max(1, ...pts.map((p) => Math.max(Math.abs(p.real), Math.abs(p.imag)))) * 1.2;
-      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (width - padL - padR);
-      const toY = (im: number) => height - padB - ((im + lim) / (2 * lim)) * (height - padT - padB);
+      const toX = (re: number) => padL + ((re + lim) / (2 * lim)) * (plotW - padL - padR);
+      const toY = (im: number) => plotH - padB - ((im + lim) / (2 * lim)) * (plotH - padT - padB);
       drawAxes(toX, toY, 0, 0);
       for (const b of branches) {
-        strokeSeries(ctx, b.points.map((p) => ({ x: toX(p.real), y: toY(p.imag) })), NOM, 1.8);
+        strokeSeries(ctx, b.points.map((p) => ({ x: toX(p.real), y: toY(p.imag) })), theme.nom, 1.8);
       }
       if (nominal) {
-        ctx.strokeStyle = NOM;
+        ctx.strokeStyle = theme.nom;
         for (const p of nominal.polesOpen) {
           ctx.beginPath();
           ctx.arc(toX(p.real), toY(p.imag), 4, 0, Math.PI * 2);
           ctx.stroke();
         }
-        ctx.fillStyle = NOM;
+        ctx.fillStyle = theme.nom;
         for (const p of nominal.polesClosed) {
           ctx.beginPath();
           ctx.arc(toX(p.real), toY(p.imag), 3.2, 0, Math.PI * 2);
@@ -434,22 +495,43 @@ export function EnsembleChart({
         }
       }
     }
-  }, [kind, width, height, nominal, selected, ensembleFreq, campaign, showAllLines]);
+  }, [kind, plotW, plotH, nominal, selected, ensembleFreq, campaign, showAllLines]);
+
+  const interactive = expandable && !!onOpen;
+  const stack = (
+    <div className="ensemble-chart-stack" style={{ position: 'relative', width: '100%', maxWidth: plotW, height: plotH }}>
+      <canvas ref={canvasRef} width={plotW} height={plotH} role="img" aria-label={title} />
+      <canvas
+        ref={glRef}
+        width={plotW}
+        height={plotH}
+        style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+        aria-hidden
+      />
+    </div>
+  );
 
   return (
-    <div className="pole-map stability-plot">
-      <h3>{title}</h3>
-      <div className="ensemble-chart-stack" style={{ position: 'relative', width, height }}>
-        <canvas ref={canvasRef} width={width} height={height} role="img" aria-label={title} />
-        <canvas
-          ref={glRef}
-          width={width}
-          height={height}
-          style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
-          aria-hidden
-        />
+    <div
+      ref={wrapRef}
+      className={`pole-map stability-plot${compact ? ' compact' : ''}${interactive ? ' expandable' : ''}`}
+    >
+      <div className="stability-plot-head">
+        <h3>{title}</h3>
+        {interactive ? (
+          <button type="button" className="plot-expand" onClick={onOpen} aria-label={`Open ${title} detail`}>
+            Open
+          </button>
+        ) : null}
       </div>
-      {hint ? <p className="hint">{hint}</p> : null}
+      {interactive ? (
+        <button type="button" className="ensemble-chart-hit" onClick={onOpen} aria-label={`Expand ${title}`}>
+          {stack}
+        </button>
+      ) : (
+        stack
+      )}
+      {hint ? <p className={`hint${compact ? ' plot-hint' : ''}`}>{hint}</p> : null}
     </div>
   );
 }

@@ -9,11 +9,11 @@
     (function () {
       try {
         var choice = localStorage.getItem('simulate-appearance');
-        if (choice === 'light' || choice === 'dark') {
-          document.documentElement.setAttribute('data-theme', choice);
-          document.documentElement.style.colorScheme = choice;
-        }
-        var dark = choice === 'dark' || (choice !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+        var dark = choice === 'dark' || ((choice === 'system' || !choice) && matchMedia('(prefers-color-scheme: dark)').matches);
+        if (choice === 'light') dark = false;
+        var theme = dark ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme;
         var meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute('content', dark ? '#1c1c1e' : '#f5f5f7');
       } catch (e) {}

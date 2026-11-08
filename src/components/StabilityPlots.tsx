@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { McCampaignStats } from '../engine/mcStats';
 import { StabilityReport } from '../engine/stability';
 import { AnalysisOption } from '../engine/types';
-import { EnsembleChart } from './EnsembleCanvas';
+import { ChartKind, EnsembleChart } from './EnsembleCanvas';
+import { PlotDetailViewer } from './PlotDetailViewer';
 
 export interface McPlotTrace {
   run: number;
@@ -11,9 +12,9 @@ export interface McPlotTrace {
 
 function legendHint(hasMc: boolean, campaign?: McCampaignStats | null): string {
   if (campaign && campaign.ok > 0) {
-    return `bands = p05–p95 · grey lines = overlay · black = nominal · amber = selected · ${campaign.backend} ${campaign.ok} runs`;
+    return `bands · overlays · nominal · selected · ${campaign.backend} ${campaign.ok} runs`;
   }
-  return hasMc ? 'grey = MC · black = nominal · amber = selected' : 'black = nominal';
+  return hasMc ? 'grey = MC · black = nominal · amber = selected' : 'Tap a plot to inspect';
 }
 
 export function StabilityPlotGrid({
@@ -24,6 +25,7 @@ export function StabilityPlotGrid({
   campaign = null,
   showAllLines = false,
   show,
+  onSelectRun,
 }: {
   report: StabilityReport;
   nominal?: StabilityReport | null;
@@ -32,7 +34,9 @@ export function StabilityPlotGrid({
   campaign?: McCampaignStats | null;
   showAllLines?: boolean;
   show: (option: AnalysisOption) => boolean;
+  onSelectRun?: (run: number) => void;
 }) {
+  const [detail, setDetail] = useState<ChartKind | null>(null);
   const base = nominal ?? report;
   const selected = selectedRun > 0 ? ensemble.find((t) => t.run === selectedRun)?.report ?? report : null;
   const ensembleFreq = useMemo(
@@ -45,70 +49,51 @@ export function StabilityPlotGrid({
   );
   const hint = legendHint(ensemble.length > 0 || !!campaign?.ok, campaign);
 
+  const chart = (kind: ChartKind, title: string, height: number, extra?: { campaign?: McCampaignStats | null; ensemble?: boolean }) => (
+    <EnsembleChart
+      kind={kind}
+      title={title}
+      hint={hint}
+      height={height}
+      fill
+      expandable
+      onOpen={() => setDetail(kind)}
+      nominal={base}
+      selected={selectedRun > 0 ? selected : null}
+      ensembleFreq={extra?.ensemble === false ? undefined : ensembleFreq}
+      campaign={extra?.campaign === null ? null : campaign}
+      showAllLines={showAllLines}
+    />
+  );
+
   return (
-    <div className="stability-plot-grid">
-      {show('polemap') ? (
-        <EnsembleChart
-          kind="poles"
-          title="Pole map"
-          hint={hint}
-          nominal={base}
-          selected={selectedRun > 0 ? selected : null}
+    <>
+      <div className="stability-plot-grid">
+        {show('polemap') ? chart('poles', 'Pole map', 168) : null}
+        {show('bode') ? (
+          <>
+            {chart('bode-mag', 'Bode magnitude', 150)}
+            {chart('bode-phase', 'Bode phase', 150)}
+          </>
+        ) : null}
+        {show('nyquist') ? chart('nyquist', 'Nyquist', 180) : null}
+        {show('nichols') ? chart('nichols', 'Nichols', 170) : null}
+        {show('rlocus') ? chart('rlocus', 'Root locus', 170, { campaign: null, ensemble: false }) : null}
+      </div>
+
+      {detail ? (
+        <PlotDetailViewer
+          kind={detail}
+          report={report}
+          nominal={nominal}
+          ensemble={ensemble}
+          selectedRun={selectedRun}
           campaign={campaign}
+          showAllLines={showAllLines}
+          onClose={() => setDetail(null)}
+          onSelectRun={onSelectRun}
         />
       ) : null}
-      {show('bode') ? (
-        <>
-          <EnsembleChart
-            kind="bode-mag"
-            title="Bode magnitude"
-            hint={hint}
-            height={150}
-            nominal={base}
-            selected={selectedRun > 0 ? selected : null}
-            ensembleFreq={ensembleFreq}
-            campaign={campaign}
-            showAllLines={showAllLines}
-          />
-          <EnsembleChart
-            kind="bode-phase"
-            title="Bode phase"
-            hint={hint}
-            height={150}
-            nominal={base}
-            selected={selectedRun > 0 ? selected : null}
-            ensembleFreq={ensembleFreq}
-            campaign={campaign}
-          />
-        </>
-      ) : null}
-      {show('nyquist') ? (
-        <EnsembleChart
-          kind="nyquist"
-          title="Nyquist"
-          hint={hint}
-          height={180}
-          nominal={base}
-          selected={selectedRun > 0 ? selected : null}
-          ensembleFreq={ensembleFreq}
-          campaign={campaign}
-        />
-      ) : null}
-      {show('nichols') ? (
-        <EnsembleChart
-          kind="nichols"
-          title="Nichols"
-          hint={hint}
-          height={170}
-          nominal={base}
-          selected={selectedRun > 0 ? selected : null}
-          ensembleFreq={ensembleFreq}
-          campaign={campaign}
-        />
-      ) : null}
-      {show('rlocus') ? (
-        <EnsembleChart kind="rlocus" title="Root locus" hint="nominal root locus (campaign uses pole cloud)" height={170} nominal={base} />
-      ) : null}
-    </div>
+    </>
   );
 }

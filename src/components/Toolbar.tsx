@@ -1,10 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Appearance, cycleAppearance, getAppearance } from '../appearance';
 import { EXAMPLES, blankDocument } from '../model/examples';
 import { parseDocument } from '../model/library';
 import { fitDiagram } from '../sim/flow';
 import { pause, play, resetSim } from '../sim/controller';
 import { confirmClose, useStore } from '../store';
 import { downloadText, formatTime } from '../ui';
+
+function appearanceLabel(choice: Appearance): string {
+  if (choice === 'light') return 'Appearance: Light';
+  if (choice === 'dark') return 'Appearance: Dark';
+  return 'Appearance: System';
+}
 
 export const Toolbar: React.FC<{
   drawer: 'library' | 'inspector' | null;
@@ -27,6 +34,7 @@ export const Toolbar: React.FC<{
   const undo = useStore((state) => state.undo);
   const redo = useStore((state) => state.redo);
   const [menu, setMenu] = useState(false);
+  const [appearance, setAppearanceState] = useState<Appearance>(() => getAppearance());
   const fileRef = useRef<HTMLInputElement>(null);
   const running = status === 'running';
 
@@ -201,6 +209,12 @@ export const Toolbar: React.FC<{
               </button>
               <button onClick={saveFile}>Export JSON…</button>
               <button onClick={() => fileRef.current?.click()}>Open JSON…</button>
+              <button
+                type="button"
+                onClick={() => setAppearanceState(cycleAppearance(appearance))}
+              >
+                {appearanceLabel(appearance)}
+              </button>
               <p>Examples</p>
               {EXAMPLES.map((example) => (
                 <button key={example.id} onClick={() => openFresh(example.create)}>
