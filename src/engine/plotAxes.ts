@@ -76,14 +76,14 @@ function superscript(n: number): string {
 }
 
 /**
- * Wrap phase into the classic Nichols window (−360°, 0°].
+ * Wrap phase into [−180°, 180°].
  * Continuous unwrapped Bode phase is folded so the chart stays readable.
  */
 export function wrapNicholsPhase(phaseDeg: number): number {
   if (!Number.isFinite(phaseDeg)) return phaseDeg;
   let x = phaseDeg;
-  while (x > 0) x -= 360;
-  while (x <= -360) x += 360;
+  while (x > 180) x -= 360;
+  while (x < -180) x += 360;
   return x;
 }
 

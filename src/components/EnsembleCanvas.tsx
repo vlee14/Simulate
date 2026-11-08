@@ -590,12 +590,12 @@ export function EnsembleChart({
       const nom = nominal?.freq ?? [];
       const all = [...nom, ...(ensembleFreq ?? []).flatMap((t) => t.freq)];
       if (all.length < 2) return;
-      // Classic Nichols window: wrap phase into (−360°, 0°].
+      // Nichols window: wrap phase into [−180°, 180°].
       const wrapped = all.map((p) => ({ phaseDeg: wrapNicholsPhase(p.phaseDeg), magDb: p.magDb }));
-      let phMin = Math.min(-360, ...wrapped.map((p) => p.phaseDeg));
-      let phMax = Math.max(0, ...wrapped.map((p) => p.phaseDeg));
-      phMin = Math.min(phMin, -360);
-      phMax = Math.max(phMax, 0);
+      let phMin = Math.min(-180, ...wrapped.map((p) => p.phaseDeg));
+      let phMax = Math.max(180, ...wrapped.map((p) => p.phaseDeg));
+      phMin = Math.min(phMin, -180);
+      phMax = Math.max(phMax, 180);
       let magMin = Math.min(...all.map((p) => p.magDb), -40);
       let magMax = Math.max(...all.map((p) => p.magDb), 20);
       const toX = (ph: number) => pad.l + ((ph - phMin) / (phMax - phMin || 1)) * (plotW - pad.l - pad.r);
