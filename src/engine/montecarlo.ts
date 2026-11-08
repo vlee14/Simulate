@@ -3,11 +3,11 @@ import { DistKind, GraphNode, Param, ParamUncertainty } from './types';
 export type { DistKind, ParamUncertainty };
 
 export const DIST_OPTIONS: { id: DistKind; label: string; help: string }[] = [
-  { id: 'none', label: 'Nominal only', help: 'Always use the typed value' },
-  { id: 'normal', label: 'Normal', help: 'N(nominal, σ) — spread is σ' },
-  { id: 'uniform', label: 'Uniform', help: 'U(nominal±spread)' },
-  { id: 'percent', label: 'Percent Normal', help: 'N(nominal, |nominal|·% / 100)' },
-  { id: 'lognormal', label: 'Lognormal', help: 'Lognormal median=nominal, σ=spread' },
+  { id: 'none', label: 'Nominal only', help: 'Use the typed value' },
+  { id: 'normal', label: 'Normal', help: 'Spread is σ' },
+  { id: 'uniform', label: 'Uniform', help: '± spread' },
+  { id: 'percent', label: 'Percent', help: 'σ as % of nominal' },
+  { id: 'lognormal', label: 'Lognormal', help: 'Median = nominal' },
 ];
 
 /** Assign a new stable seed when a distribution is first created/enabled. */
@@ -261,8 +261,8 @@ export function recommendMcRuns(nodesOrParamCount: GraphNode[] | number, opts: M
       tails: 0,
       screening: 0,
       recommended: 0,
-      summary: 'No distributed parameters — Monte Carlo runs are optional.',
-      detail: 'Enable a distribution on numeric plant/sensor parameters to size the campaign from CV and confidence.',
+      summary: 'No uncertain parameters yet.',
+      detail: 'Add a distribution on a parameter to enable Monte Carlo.',
     };
   }
 
@@ -288,13 +288,8 @@ export function recommendMcRuns(nodesOrParamCount: GraphNode[] | number, opts: M
     tails,
     screening,
     recommended: mean,
-    summary:
-      `${params} uncertain parameter${params === 1 ? '' : 's'}, proxy CV≈${cv.toFixed(3)} → ` +
-      `N≥${mean} for a ${(confidence * 100).toFixed(0)}% CI on the mean within ±${(relError * 100).toFixed(1)}%.`,
-    detail:
-      `CLT mean: N=(z·CV/ε)² with z=${z.toFixed(3)}, CV≈${cv.toFixed(3)} (RSS of relative σ), ε=${relError}. ` +
-      `Tails: max(z²q(1−q)/δ², 50/(1−q)) at q=${q}, δ=${tailCdfError} → ${tails}. ` +
-      `Screening: Saltelli N=M(2p+2)=${screening}. Run 0 is nominal and excluded from N.`,
+    summary: `${params} uncertain parameter${params === 1 ? '' : 's'} — try about ${mean} runs for the mean.`,
+    detail: 'More runs tighten means and tails.',
   };
 }
 

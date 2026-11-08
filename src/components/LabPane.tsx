@@ -71,9 +71,8 @@ export function LabPane() {
   return (
     <div className="pane">
       <h2>Lab</h2>
-      <p className="lede">Time-domain experiments, sensitivity, synthesis extras, and export / share.</p>
 
-      <h3>Time-domain experiment</h3>
+      <h3>Experiment</h3>
       <label className="field">
         <span>Kind</span>
         <select value={kind} onChange={(e) => setKind(e.target.value as ExperimentKind)}>
@@ -103,7 +102,7 @@ export function LabPane() {
         </select>
       </label>
       <label className="field">
-        <span>MC runs (envelope)</span>
+        <span>Monte Carlo runs</span>
         <input type="number" min={0} max={500} value={mcRuns} onChange={(e) => setMcRuns(Math.max(0, Number(e.target.value) || 0))} />
       </label>
       <div className="design-actions">
@@ -167,7 +166,7 @@ export function LabPane() {
             })
           }
         >
-          Tornado + Sobol proxy
+          Run sensitivity
         </button>
       </div>
       {sensitivity ? (
@@ -181,26 +180,25 @@ export function LabPane() {
           </ul>
           {sensitivity.tornado.slice(0, 6).map((bar) => (
             <div key={bar.id} className="hint">
-              {bar.label}: Δ={bar.effect.toFixed(3)} (lo {bar.low.toFixed(3)} … hi {bar.high.toFixed(3)})
+              {bar.label}: {bar.effect.toFixed(3)}
             </div>
           ))}
         </>
       ) : null}
 
-      <h3>Synthesis shortcuts</h3>
-      <p className="hint">Full controller catalog (LQR, LQI, LQG, PID, lead/lag, H∞ shaping, deadbeat, …) lives on the Design tab.</p>
+      <h3>Quick tune</h3>
+      <p className="hint">More controllers are on Design.</p>
       <div className="design-actions stacked">
         <button type="button" className="ghost wide" onClick={() => tunePid('imc')}>
           Tune PID (IMC)
         </button>
         <button type="button" className="ghost wide" onClick={() => tunePid('zn')}>
-          Tune PID (Ziegler–Nichols)
+          Tune PID (Z–N)
         </button>
       </div>
       <label className="field">
         <span>Desired poles</span>
         <input value={poles} onChange={(e) => setPoles(e.target.value)} placeholder="-2 -3 or -1±2j" />
-        <em>Ackermann placement onto k0… / kref</em>
       </label>
       <div className="design-actions">
         <button type="button" className="ghost wide" onClick={() => placeControllerPoles(poles)}>
@@ -272,7 +270,7 @@ export function LabPane() {
         </button>
       </div>
       {shareMsg ? <p className="hint">{shareMsg}</p> : null}
-      <p className="hint">Share links embed the model in the URL hash (#model=…). Open the link on Home to load.</p>
+      <p className="hint">Link includes the model. Open it from Home.</p>
     </div>
   );
 }

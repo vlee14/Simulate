@@ -144,7 +144,7 @@ export function placePolesSiso(A: number[][], B: number[][], poles: { real: numb
     K: row,
     polesDesired: desired,
     polesClosed,
-    note: 'Ackermann pole placement (SISO). Wrote state-feedback gains for roles k0…',
+    note: 'Pole placement applied.',
   };
 }
 
@@ -227,7 +227,7 @@ export function tunePidImc(
     Ki,
     Kd,
     Tf: Math.max(0.02, 0.1 * lambda),
-    note: `IMC-ish PID from DC gain=${Kdc.toFixed(3)}, τ≈${tau.toFixed(3)}, λ=${lambda.toFixed(3)}.`,
+    note: `IMC PID tuned (λ=${lambda.toFixed(2)} s).`,
   };
 }
 
@@ -267,7 +267,7 @@ export function tunePidZn(
     Ki,
     Kd,
     Tf: Math.max(0.02, 0.05 * Pu),
-    note: `Ziegler–Nichols PID from Ku≈${Ku.toFixed(3)}, Pu≈${Pu.toFixed(3)} s.`,
+    note: 'Ziegler–Nichols PID tuned.',
   };
 }
 
@@ -319,7 +319,7 @@ export function tunePiImc(
   opts: { x0?: number[]; u0?: number[]; lambda?: number } = {}
 ): PidGains {
   const full = tunePidImc(blockType, parameters, opts);
-  return { ...full, Kd: 0, note: full.note.replace('PID', 'PI') + ' (Kd=0).' };
+  return { ...full, Kd: 0, note: full.note.replace('PID', 'PI') };
 }
 
 /** PD from DC gain / τ — no integral. */
@@ -339,7 +339,7 @@ export function tunePd(
     Ki: 0,
     Kd,
     Tf: Math.max(0.02, 0.1 * lambda),
-    note: `PD from DC=${Kdc.toFixed(3)}, τ≈${tau.toFixed(3)}, λ=${lambda.toFixed(3)}.`,
+    note: `PD tuned (λ=${lambda.toFixed(2)} s).`,
   };
 }
 
@@ -359,7 +359,7 @@ export function tuneP(
     Ki: 0,
     Kd: 0,
     Tf: 0.05,
-    note: `P-only from DC=${Kdc.toFixed(3)}, λ=${lambda.toFixed(3)}.`,
+    note: `P tuned (λ=${lambda.toFixed(2)} s).`,
   };
 }
 
@@ -391,7 +391,7 @@ export function designLqi(
     Kx,
     Ki,
     polesClosed: result.polesClosed,
-    note: `LQI with Qi=${Qi.toFixed(2)} — state gains k0… plus integral Ki=${Ki.toFixed(3)}.`,
+    note: `LQI applied (Ki=${Ki.toFixed(2)}).`,
   };
 }
 
@@ -408,7 +408,7 @@ export function designObserverLqr(A: number[][], Qdiag: number[], R: number): Ob
   return {
     L,
     poles: eigenvalues(Ao),
-    note: 'Observer gain from dual LQR (C=[1 0 …]). Wrote L onto Observer block.',
+    note: 'Observer gains applied.',
   };
 }
 
@@ -434,7 +434,7 @@ export function designLead(opts: { omegaC: number; phaseBoostDeg: number; K?: nu
   return {
     numerator: fmtPoly(num),
     denominator: fmtPoly(den),
-    note: `Lead α=${alpha.toFixed(3)}, τ=${tau.toFixed(3)}, ωc=${wc.toFixed(2)} rad/s, φ≈${opts.phaseBoostDeg}°.`,
+    note: `Lead at ωc=${wc.toFixed(1)} rad/s.`,
   };
 }
 
@@ -449,7 +449,7 @@ export function designLag(opts: { omegaC: number; alpha?: number; K?: number }):
   return {
     numerator: fmtPoly(num),
     denominator: fmtPoly(den),
-    note: `Lag α=${alpha.toFixed(2)}, τ=${tau.toFixed(3)}, ωc≈${wc.toFixed(2)} rad/s.`,
+    note: `Lag at ωc=${wc.toFixed(1)} rad/s.`,
   };
 }
 
@@ -477,7 +477,7 @@ export function designLeadLag(opts: {
   return {
     numerator: fmtPoly(num),
     denominator: fmtPoly(den),
-    note: `Lead–lag cascade · ${lead.note} · ${lag.note}`,
+    note: 'Lead–lag applied.',
   };
 }
 
@@ -493,7 +493,7 @@ export function designHinfLoopShape(opts: { omegaC: number; phaseBoostDeg?: numb
   });
   return {
     ...lead,
-    note: `H∞ loop-shaping approx. — ${lead.note}`,
+    note: lead.note.replace('Lead', 'Loop shaping'),
   };
 }
 
@@ -505,6 +505,6 @@ export function designDeadbeat(A: number[][], B: number[][], Ts: number): PolePl
   const result = placePolesSiso(Ad, Bd, poles);
   return {
     ...result,
-    note: `Deadbeat (discrete, Ts=${ts}) — poles at z=0 mapped to continuous gains k0… (approximate).`,
+    note: `Deadbeat applied (Ts=${ts}).`,
   };
 }

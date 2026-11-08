@@ -154,7 +154,7 @@ export const Toolbar: React.FC<{
         </label>
         <label
           className="mini"
-          title="Monte Carlo run · 0 = nominal · open Document pane for run-count recommendations from # of uncertain parameters"
+          title="Monte Carlo run (0 = nominal)"
         >
           MC
           <input

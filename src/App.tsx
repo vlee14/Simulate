@@ -115,7 +115,7 @@ const App: React.FC = () => {
           {config.solver.toUpperCase()} · dt {config.stepSize}s · {config.speed}×
           {rate > 0.05 ? ` · ${rate.toFixed(2)} sim s/s` : ''}
         </span>
-        <span className="status-hint">Space runs · drag blocks in · wire an output to an input</span>
+        <span className="status-hint">Space = Run · drag blocks · wire ports</span>
       </footer>
     </div>
   );

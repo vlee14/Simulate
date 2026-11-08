@@ -105,7 +105,7 @@ export const Library: React.FC<{ mobileOpen: boolean; compact: boolean; onClose:
           <section>
             <h3>Recipes</h3>
             <p className="lede" style={{ padding: '0 10px 8px', fontSize: 12 }}>
-              Drop a wired plant with actuators, sensors, and Stage animation — or package it as one Subsystem block.
+              Insert a wired plant, or as one subsystem.
             </p>
             {recipes.map((recipe) => (
               <div key={recipe.id} className="lib-item plant-recipe">

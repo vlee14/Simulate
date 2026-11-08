@@ -506,8 +506,7 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'pronav',
     category: 'Math',
     name: 'Pro Nav',
-    description:
-      'True proportional navigation. Inputs are relative (target − interceptor): rx, rz, vrx, vrz. a_cmd = N·Vc·λ̇; ax/az are the inertial components perpendicular to the LOS.',
+    description: 'Proportional navigation guidance.',
     renderer: 'sim',
     defaultParameters: { N: 3, eps: 0.15, aMax: 6, fadeRange: 1.5 },
     parameters: [
@@ -568,7 +567,7 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'integrator',
     category: 'Continuous',
     name: 'Integrator',
-    description: 'Integrates the input. y = ∫ u dt. No direct feedthrough.',
+    description: 'Integrates the input.',
     renderer: 'sim',
     defaultParameters: { initialCondition: 0, limitOutput: false, upperLimit: 10, lowerLimit: -10 },
     parameters: [
@@ -676,7 +675,7 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'transfer',
     category: 'Continuous',
     name: 'Transfer Fcn',
-    description: 'Proper H(s). Coefficients are highest power first.',
+    description: 'Transfer function. Highest power first.',
     renderer: 'sim',
     defaultParameters: { numerator: '1', denominator: '1 1' },
     parameters: [
@@ -718,7 +717,7 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'observer',
     category: 'Continuous',
     name: 'Observer',
-    description: 'Luenberger observer: ẋ̂ = A x̂ + B u + L (y − C x̂). Outputs estimated states.',
+    description: 'Estimates plant states from inputs and outputs.',
     renderer: 'sim',
     defaultParameters: {
       A: '0 1; -2 -0.8',
@@ -800,7 +799,7 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'kalman',
     category: 'Discrete',
     name: 'Kalman',
-    description: 'Discrete linear Kalman filter for ẋ=Ax+Bu, y=Cx (+ process/measure noise). Sample time required.',
+    description: 'Discrete Kalman filter. Needs sample time.',
     renderer: 'sim',
     defaultParameters: {
       A: '1 0.02; 0 0.98',
@@ -992,7 +991,7 @@ export const BLOCKS: BlockDefinition[] = [
     type: 'delay',
     category: 'Discrete',
     name: 'Unit Delay',
-    description: 'Holds the input for one sample. Breaks discrete algebraic loops.',
+    description: 'One-sample delay.',
     renderer: 'sim',
     defaultParameters: { sampleTime: 0.01, initialOutput: 0 },
     parameters: [

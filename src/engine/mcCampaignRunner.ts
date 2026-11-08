@@ -69,9 +69,9 @@ function chunkRanges(nRuns: number, chunks: number): { start: number; end: numbe
 }
 
 function phaseLabel(phase: CampaignPhase, backendHint?: string): string {
-  if (phase === 'sample') return 'Sampling plants (workers)';
-  if (phase === 'bode') return backendHint === 'webgpu' ? 'Batch Bode (WebGPU)' : 'Batch Bode (CPU)';
-  return 'Aggregating bands';
+  if (phase === 'sample') return 'Sampling plants';
+  if (phase === 'bode') return backendHint === 'webgpu' ? 'Computing Bode' : 'Computing Bode';
+  return 'Building bands';
 }
 
 function makeProgress(

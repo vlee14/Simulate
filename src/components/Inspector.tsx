@@ -33,10 +33,10 @@ import { StabilityPlotGrid } from './StabilityPlots';
 const Q_LABELS = ['Q₁ (x₁)', 'Q₂ (x₂)', 'Q₃ (x₃)', 'Q₄ (x₄)', 'Q₅ (x₅)', 'Q₆ (x₆)'];
 
 const OP_MODES: { id: LinearizationPoint; label: string }[] = [
-  { id: 'equilibrium', label: 'Equilibrium (0)' },
+  { id: 'equilibrium', label: 'Equilibrium' },
   { id: 'x0', label: 'Plant x₀' },
-  { id: 'live', label: 'Live simulation state' },
-  { id: 'custom', label: 'Custom breakpoint' },
+  { id: 'live', label: 'Live state' },
+  { id: 'custom', label: 'Custom' },
 ];
 
 export const Inspector: React.FC<{ mobileOpen: boolean; compact: boolean; onClose: () => void }> = ({
@@ -135,20 +135,20 @@ function ModelPane() {
       <h3>Monte Carlo</h3>
       <NumberField
         label="Simulation run"
-        help="0 = nominal values. n>0 draws each distributed parameter from its fixed seed (same run ⇒ same draws)."
+        help="0 = nominal. Higher runs use fixed random draws."
         value={mcRun}
         step={1}
         onCommit={(value) => setConfig({ mcRun: Math.max(0, Math.round(value)) })}
       />
       <div className="design-actions">
         <button type="button" className="ghost" onClick={() => setConfig({ mcRun: 0 })}>
-          Nominal (0)
+          Nominal
         </button>
         <button type="button" className="ghost" onClick={() => setConfig({ mcRun: mcRun + 1 })}>
           Next run
         </button>
       </div>
-      <h3>Sample-size targets</h3>
+      <h3>Sample size</h3>
       <label className="field">
         <span>Confidence</span>
         <select
@@ -159,18 +159,17 @@ function ModelPane() {
           <option value="0.95">95%</option>
           <option value="0.99">99%</option>
         </select>
-        <em>Two-sided normal CI for the CLT mean formula.</em>
       </label>
       <NumberField
-        label="Mean relative half-width ε"
-        help="Want |μ̂−μ| ≤ ε|μ| with the chosen confidence (default 5%)."
+        label="Mean precision"
+        help="Target relative error on the mean."
         value={mcRelError}
         step={0.01}
         onCommit={(value) => setConfig({ mcRelError: Math.min(0.5, Math.max(0.005, value)) })}
       />
       <NumberField
-        label="Tail quantile q"
-        help="Percentile of interest for the tail sample-size formula (e.g. 0.95)."
+        label="Tail quantile"
+        help="Percentile used for tail sample size."
         value={mcTailQuantile}
         step={0.01}
         onCommit={(value) => setConfig({ mcTailQuantile: Math.min(0.999, Math.max(0.5, value)) })}
@@ -185,23 +184,19 @@ function ModelPane() {
                 <span>{advice.params}</span>
               </li>
               <li>
-                <span>Proxy CV</span>
+                <span>Variability</span>
                 <span>{advice.cv.toFixed(3)}</span>
               </li>
               <li>
-                <span>Pilot (≈N/4)</span>
-                <span>1…{advice.explore}</span>
-              </li>
-              <li>
-                <span>CLT mean</span>
+                <span>For mean</span>
                 <span>1…{advice.mean}</span>
               </li>
               <li>
-                <span>Tails / quantile</span>
+                <span>For tails</span>
                 <span>1…{advice.tails}</span>
               </li>
               <li>
-                <span>Saltelli screen</span>
+                <span>For screening</span>
                 <span>1…{advice.screening}</span>
               </li>
             </ul>
@@ -213,23 +208,18 @@ function ModelPane() {
                 Jump to {advice.recommended}
               </button>
             </div>
-            <p className="hint">{advice.detail}</p>
             {mcRun > 0 ? (
               <p className="hint">
-                Progress vs CLT mean: {Math.min(mcRun, advice.mean)} / {advice.mean}
-                {mcRun >= advice.mean ? ' · mean N met' : ''}
-                {mcRun >= advice.tails ? ' · tails N met' : ''}
-                {mcRun >= advice.screening ? ' · screening N met' : ''}
+                Progress: {Math.min(mcRun, advice.mean)} / {advice.mean} for mean
               </p>
             ) : (
-              <p className="hint">You are on nominal (run 0). Use runs 1…N for the campaign.</p>
+              <p className="hint">On nominal. Use run 1+ for Monte Carlo.</p>
             )}
           </>
         ) : (
           <p className="hint">{advice.detail}</p>
         )}
       </div>
-      <p className="hint">Initial conditions are read when you press Run. Gains and plant parameters update live.</p>
     </div>
   );
 }
@@ -300,7 +290,7 @@ function ScopeMetrics({ id }: { id: string }) {
   const ring = telemetry.series.get(telemetry.key(id, 'in0')) ?? telemetry.series.get(telemetry.key(id, 'in'));
   const metrics = stepResponseMetrics(ring);
   if (!ring || ring.count < 8) {
-    return <p className="hint">Run the model to see step-response metrics for channel 1.</p>;
+    return <p className="hint">Run the model to see step metrics.</p>;
   }
   const fmt = (value: number | null, suffix = '') => (value === null || !Number.isFinite(value) ? '—' : `${value.toFixed(3)}${suffix}`);
   return (
@@ -328,7 +318,7 @@ function ScopeMetrics({ id }: { id: string }) {
           <span>{fmt(metrics.peak)}</span>
         </li>
       </ul>
-      <p className="hint">Estimated from the recorded trace at t = {time.toFixed(2)} s.</p>
+      <p className="hint">From the trace at t = {time.toFixed(2)} s.</p>
     </section>
   );
 }
@@ -561,9 +551,7 @@ function DesignPane() {
   return (
     <div className="pane design-pane">
       <header className="pane-hero">
-        <p className="eyebrow">Control design</p>
-        <h2>Analyze & tune</h2>
-        <p className="lede">Pick a controller, linearize, synthesize gains, then inspect margins and plots.</p>
+        <h2>Design</h2>
       </header>
 
       <div className="segmented" role="tablist" aria-label="Design sections">
@@ -595,7 +583,7 @@ function DesignPane() {
                   </option>
                 ))}
               </select>
-              <em>Where A, B are taken for LQR and stability analysis.</em>
+              <em>Point used for linearization.</em>
             </label>
             <label className="field">
               <span>x* (state)</span>
@@ -657,9 +645,7 @@ function DesignPane() {
                   </optgroup>
                 ))}
               </select>
-              <em>
-                {controllerMeta.help} · writes to {controllerMeta.target}
-              </em>
+              <em>{controllerMeta.help}</em>
             </label>
 
             {needsPoles ? (
@@ -670,13 +656,12 @@ function DesignPane() {
                   placeholder="-2 -3 or -1±2j"
                   onChange={(event) => setDesignController({ poles: event.target.value })}
                 />
-                <em>Ackermann placement onto k0… / kref</em>
               </label>
             ) : null}
 
             {needsPid ? (
               <NumberField
-                label="IMC λ (s, 0 = auto)"
+                label="λ (s, 0 = auto)"
                 value={design.pidLambda ?? 0}
                 step={0.05}
                 onCommit={(value) => setDesignController({ pidLambda: Math.max(0, value) })}
@@ -757,10 +742,7 @@ function DesignPane() {
                 checked={showAllLines}
                 onChange={(event) => setConfig({ mcShowAllLines: event.target.checked })}
               />
-              <span>
-                WebGL all Bode magnitude lines
-                <em>Prefer bands for reading; enable for dense overlays.</em>
-              </span>
+              <span>Show all Bode lines</span>
             </label>
             <NumberField
               label="Selected run (0 = nominal)"
@@ -799,34 +781,28 @@ function DesignPane() {
             ) : null}
             <p className="hint">
               {uncertainCount > 0
-                ? `Analyze launches a worker campaign. Plots use bands + ${overlayCount} overlays.`
-                : 'Enable parameter distributions on Properties to unlock Monte Carlo.'}
+                ? `Analyze runs Monte Carlo with bands + ${overlayCount} overlays.`
+                : 'Add parameter distributions on Properties for Monte Carlo.'}
             </p>
           </section>
         </>
       ) : view ? (
         <div className="poles design-results">
-          {view.opLabel ? <p className="hint">Breakpoint: {view.opLabel}</p> : null}
+          {view.opLabel ? <p className="hint">At: {view.opLabel}</p> : null}
 
           {campaign ? (
             <ul className="metric-grid campaign-metrics">
               <li>
                 <span>Stable</span>
-                <strong>
-                  {(100 * campaign.stableFraction).toFixed(1)}%
-                </strong>
+                <strong>{(100 * campaign.stableFraction).toFixed(1)}%</strong>
               </li>
               <li>
-                <span>α_cl p50</span>
+                <span>α p50</span>
                 <strong>{campaign.alphaP50 == null ? '—' : campaign.alphaP50.toFixed(3)}</strong>
               </li>
               <li>
-                <span>α_cl p95</span>
+                <span>α p95</span>
                 <strong>{campaign.alphaP95 == null ? '—' : campaign.alphaP95.toFixed(3)}</strong>
-              </li>
-              <li>
-                <span>Backend</span>
-                <strong>{campaign.backend}</strong>
               </li>
             </ul>
           ) : null}
@@ -882,7 +858,7 @@ function DesignPane() {
                   <strong>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)}`}</strong>
                 </li>
               </ul>
-              <p className="hint">{report.margins.note}</p>
+              {report.margins.note ? <p className="hint">{report.margins.note}</p> : null}
             </section>
           ) : null}
 
@@ -890,7 +866,6 @@ function DesignPane() {
             <section className="analysis-card plots-card">
               <div className="stability-plot-head section-head">
                 <h3>Plots</h3>
-                <span className="hint">Tap a chart for detail</span>
               </div>
               <StabilityPlotGrid
                 report={report}
@@ -970,7 +945,7 @@ function DesignPane() {
           </section>
         </div>
       ) : (
-        <p className="hint empty-results">Select a plant, set the breakpoint, then Analyze or Synthesize.</p>
+        <p className="hint empty-results">Select a plant, then Analyze or Synthesize.</p>
       )}
 
       <div className="design-sticky-actions">

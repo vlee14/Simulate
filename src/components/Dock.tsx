@@ -293,7 +293,7 @@ export const Dock: React.FC = () => {
                 ) : null}
               </div>
             ) : (
-              <p className="hint">Add Stage `control`, `disturbance`, `nudge`, or `interact` parameters for live UI.</p>
+              <p className="hint">Add Stage controls for live UI.</p>
             )}
           </div>
         </div>

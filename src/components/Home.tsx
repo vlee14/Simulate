@@ -80,7 +80,7 @@ export const Home: React.FC = () => {
       <main className="home-main">
         <section>
           <h2>Your documents</h2>
-          <p className="lede">Models you save stay in this browser. Export JSON when you want a file.</p>
+          <p className="lede">Saved in this browser.</p>
           {entries.length === 0 ? (
             <p className="empty">Nothing saved yet. Start a new model, or open an example and save it here.</p>
           ) : (
@@ -113,7 +113,7 @@ export const Home: React.FC = () => {
 
         <section>
           <h2>Examples</h2>
-          <p className="lede">Each example is its own document. Opening one makes an unsaved copy you can retune and save.</p>
+          <p className="lede">Opens as an unsaved copy.</p>
           <div className="doc-grid">
             {EXAMPLES.map((example) => (
               <article key={example.id} className="doc-card">
