@@ -16,7 +16,13 @@ import {
   McRunSample,
 } from '../engine/mcStats';
 import { SimulationEngine } from '../engine/runtime';
-import { analyzeStability, formatVector, parseVector, StabilityReport } from '../engine/stability';
+import {
+  analyzeStability,
+  buildConclusions,
+  formatVector,
+  parseVector,
+  StabilityReport,
+} from '../engine/stability';
 import { telemetry } from '../engine/telemetry';
 import { DesignConfig, GraphNode } from '../engine/types';
 import { toGraph } from '../model/elements';
@@ -360,26 +366,37 @@ function linearizePlantRun(
 }
 
 function sampleToOverlayReport(sample: McRunSample, ws: number[], nominal: StabilityReport): StabilityReport {
+  const margins =
+    sample.gainMarginDb != null || sample.phaseMarginDeg != null
+      ? {
+          gainMarginDb: sample.gainMarginDb,
+          phaseMarginDeg: sample.phaseMarginDeg,
+          gainCrossoverRad: null as number | null,
+          phaseCrossoverRad: null as number | null,
+          delayMarginSec: null as number | null,
+          note: 'From MC campaign frequency response',
+        }
+      : nominal.margins;
+  const conclusions = buildConclusions({
+    polesOpen: nominal.polesOpen,
+    polesClosed: sample.polesClosed,
+    controllable: nominal.controllable,
+    controllabilityRank: nominal.controllabilityRank,
+    n: nominal.n,
+    margins,
+    settlingEstimate: null,
+    spectralAbscissaClosed: sample.spectralAbscissa,
+  });
   return {
     ...nominal,
     polesClosed: sample.polesClosed,
     closedStable: sample.closedStable,
     spectralAbscissaClosed: sample.spectralAbscissa,
     freq: sample.freqFlat && (sample.freqFlat as ArrayLike<number>).length ? freqFlatToPoints(sample.freqFlat, ws) : sampleToFreqPoints(sample, ws),
-    margins: sample.gainMarginDb != null || sample.phaseMarginDeg != null
-      ? {
-          gainMarginDb: sample.gainMarginDb,
-          phaseMarginDeg: sample.phaseMarginDeg,
-          gainCrossoverRad: null,
-          phaseCrossoverRad: null,
-          note: 'From MC campaign frequency response',
-        }
-      : nominal.margins,
+    margins,
+    conclusions,
     rootLocus: [],
-    summary: [
-      sample.closedStable ? 'Closed loop: asymptotically stable' : 'Closed loop: unstable (or marginally stable)',
-      `MC run ${sample.run}`,
-    ],
+    summary: [conclusions.headline, ...conclusions.bullets, `MC run ${sample.run}`],
   };
 }
 
