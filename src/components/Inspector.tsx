@@ -851,13 +851,27 @@ function DesignPane() {
                   <strong>{report.margins.delayMarginSec == null ? '—' : `${report.margins.delayMarginSec.toFixed(3)} s`}</strong>
                 </li>
                 <li>
-                  <span>ω_gc</span>
+                  <span>ω_gc low</span>
                   <strong>{report.margins.gainCrossoverRad == null ? '—' : `${report.margins.gainCrossoverRad.toFixed(2)}`}</strong>
+                </li>
+                <li>
+                  <span>ω_gc high</span>
+                  <strong>
+                    {report.margins.gainCrossoverHighRad == null
+                      ? '—'
+                      : `${report.margins.gainCrossoverHighRad.toFixed(2)}`}
+                  </strong>
                 </li>
                 <li>
                   <span>ω_pc</span>
                   <strong>{report.margins.phaseCrossoverRad == null ? '—' : `${report.margins.phaseCrossoverRad.toFixed(2)}`}</strong>
                 </li>
+                {report.margins.phaseMarginHighDeg != null ? (
+                  <li>
+                    <span>PM high</span>
+                    <strong>{`${report.margins.phaseMarginHighDeg.toFixed(1)}°`}</strong>
+                  </li>
+                ) : null}
               </ul>
               {report.margins.note ? <p className="hint">{report.margins.note}</p> : null}
             </section>
